@@ -1,6 +1,6 @@
 # ==============================================================================
 # PROYECTO: AI Job Application Tracker
-# FASE 2: Integración con Base de Datos Relacional SQLite (main.py)
+# FASE 2: Integración Completa: Importación de Excel y SQLite (main.py)
 # ==============================================================================
 
 import os
@@ -14,6 +14,7 @@ from database import (
     get_connection,
     DB_NAME
 )
+from import_excel import importar_desde_excel, EXCEL_FILE
 
 
 # ------------------------------------------------------------------------------
@@ -35,7 +36,7 @@ def mostrar_resumen_status():
         cursor.execute(query)
         filas = cursor.fetchall()
         
-        print("Aplicaciones por status (desde SQLite):")
+        print("\nAplicaciones por status (desde SQLite):")
         for fila in filas:
             print(f"- {fila['status']}: {fila['cantidad']}")
 
@@ -64,32 +65,39 @@ def mostrar_aplicaciones(lista_apps, limite: int = 10):
 # ------------------------------------------------------------------------------
 def main():
     print("=" * 65)
-    print("=== AI Job Application Tracker (Fase 2: SQLite Database) ===")
+    print("=== AI Job Application Tracker (Fase 2: SQLite & Excel) ===")
     print("=" * 65)
     print()
 
-    # 1. Asegurar que las tablas existan en SQLite
+    # 1. Crear las tablas si no existen
     create_tables()
 
-    # 2. Consultar todas las aplicaciones guardadas en la base de datos real
+    # 2. Si el archivo Excel existe, ejecutamos la importación y sincronización
+    if os.path.exists(EXCEL_FILE):
+        importar_desde_excel(limpiar_antes=True)
+    else:
+        print(f"Aviso: Archivo '{EXCEL_FILE}' no encontrado. Leyendo base existente...")
+
+    # 3. Consultar todas las aplicaciones guardadas en la base de datos real
     aplicaciones = get_all_applications()
     total = len(aplicaciones)
 
+    print("\n" + "=" * 65)
     print(f"Base de datos activa: {DB_NAME}")
     print(f"Total de aplicaciones registradas en SQLite: {total}")
-    print()
+    print("=" * 65)
 
     if total == 0:
         print("No hay aplicaciones cargadas aún.")
-        print("Ejecuta 'python import_excel.py' para importar tus datos desde Excel.")
         return
 
-    # 3. Mostrar desglose por status mediante SQL
+    # 4. Mostrar desglose por status mediante SQL
     mostrar_resumen_status()
 
-    # 4. Mostrar listado de aplicaciones
+    # 5. Mostrar listado de aplicaciones reales
     mostrar_aplicaciones(aplicaciones, limite=10)
 
+    # 6. Demostración de operaciones CRUD
     print("\n" + "=" * 65)
     print("DEMOSTRACIÓN DE OPERACIONES CRUD EN SQLITE")
     print("=" * 65)
@@ -111,7 +119,7 @@ def main():
     app_recien_creada = get_application_by_id(nuevo_id)
     print(f">> Encontrado: {app_recien_creada['company']} - {app_recien_creada['position']} ({app_recien_creada['status']})")
 
-    # C) UPDATE: Cambiar el estado a 'Interview'
+    # C) UPDATE: Cambiar el estado a 'Technical Interview'
     print("\n[U - Update]: Actualizando estado a 'Technical Interview'...")
     update_application_status(nuevo_id, "Technical Interview")
     app_actualizada = get_application_by_id(nuevo_id)
@@ -121,7 +129,8 @@ def main():
     print("\n[D - Delete]: Eliminando registro de prueba...")
     eliminado = delete_application(nuevo_id)
     print(f">> ¿Eliminado correctamente?: {eliminado}")
-    print("=" * 65)
+    
+    print("\n" + "=" * 65)
     print("¡Fase 2 completada con éxito! La persistencia en SQLite funciona al 100%.")
     print("=" * 65)
 

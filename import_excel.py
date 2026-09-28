@@ -114,10 +114,13 @@ def construir_salario(row) -> str | None:
 # dentro de una sola transacción atómica (un solo commit).
 # ------------------------------------------------------------------------------
 
-def importar_desde_excel():
+def importar_desde_excel(limpiar_antes: bool = True):
     """
     Lee el archivo Excel, aplica la limpieza de datos e inserta masivamente
     en la tabla 'applications' de SQLite.
+    
+    Si limpiar_antes es True, limpia la tabla antes de importar para evitar
+    duplicar los registros si se ejecuta varias veces.
     """
     if not os.path.exists(EXCEL_FILE):
         print(f"Error: No se encontró el archivo '{EXCEL_FILE}' en la carpeta actual.")
@@ -129,6 +132,13 @@ def importar_desde_excel():
 
     # 1. Asegurar que las tablas existan
     create_tables()
+
+    # Si se pide reiniciar la tabla para sincronización limpia
+    if limpiar_antes:
+        with get_connection() as conn:
+            conn.execute("DELETE FROM applications;")
+            conn.execute("DELETE FROM sqlite_sequence WHERE name='applications';")
+            conn.commit()
 
     # 2. Leer con pandas
     df = pd.read_excel(EXCEL_FILE)
