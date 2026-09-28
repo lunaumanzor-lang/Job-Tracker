@@ -9,8 +9,11 @@ from datetime import datetime
 import pandas as pd
 from database import DB_NAME, get_connection, create_tables
 
-# Ruta del archivo Excel de origen
-EXCEL_FILE = "Applications 2026.xlsx"
+# Directorio base del proyecto (donde reside este archivo .py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ruta absoluta del archivo Excel de origen
+EXCEL_FILE = os.path.join(BASE_DIR, "Applications 2026.xlsx")
+
 
 
 # ------------------------------------------------------------------------------

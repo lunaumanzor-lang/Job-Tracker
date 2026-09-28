@@ -3,11 +3,15 @@
 # FASE 2: Base de Datos Relacional con SQLite (database.py)
 # ==============================================================================
 
+import os
 import sqlite3
 from typing import List, Dict, Optional, Any
 
-# Nombre del archivo de base de datos local
-DB_NAME = "job_tracker.db"
+# Directorio base del proyecto (donde reside este archivo .py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ruta absoluta de la base de datos local
+DB_NAME = os.path.join(BASE_DIR, "job_tracker.db")
+
 
 
 # ------------------------------------------------------------------------------
