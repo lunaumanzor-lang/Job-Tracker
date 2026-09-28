@@ -1,0 +1,7 @@
+# Dependencias del proyecto AI Job Application Tracker
+# Fase 2: Manipulación y lectura de Excel a SQLite
+pandas>=2.2.0
+openpyxl>=3.1.0
+
+# Fase 3 / 4: Dashboard y visualizaciones
+streamlit>=1.35.0
