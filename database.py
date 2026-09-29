@@ -209,6 +209,39 @@ def update_application_status(app_id: int, new_status: str) -> bool:
         return cursor.rowcount > 0
 
 
+def update_application(
+    app_id: int,
+    company: str,
+    position: str,
+    status: str,
+    application_date: Optional[str] = None,
+    salary: Optional[str] = None,
+    work_mode: Optional[str] = None,
+    location: Optional[str] = None,
+    job_url: Optional[str] = None,
+    notes: Optional[str] = None
+) -> bool:
+    """
+    Actualiza todos los campos editables de una aplicación existente en SQLite.
+    """
+    query = """
+    UPDATE applications
+    SET company = ?, position = ?, status = ?, application_date = ?,
+        salary = ?, work_mode = ?, location = ?, job_url = ?, notes = ?
+    WHERE id = ?;
+    """
+    params = (
+        company, position, status, application_date,
+        salary, work_mode, location, job_url, notes, app_id
+    )
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+
 # ------------------------------------------------------------------------------
 # 5. OPERACIONES CRUD: DELETE (Eliminar)
 # ------------------------------------------------------------------------------
