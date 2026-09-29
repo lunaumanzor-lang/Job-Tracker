@@ -38,9 +38,8 @@ from database import (
     get_skills_by_application
 )
 
-# Módulos de extracción de CV, Web Scraping e Inteligencia Artificial
+# Módulos de extracción de CV e Inteligencia Artificial
 from resume_parser import extract_resume_text
-from job_scraper import extract_job_text_from_url
 from ai_service import (
     extract_skills_and_profile_from_resume,
     analyze_job_description,
@@ -577,49 +576,16 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                 help="Obtén tu clave gratuita en https://aistudio.google.com/app/apikey"
             )
 
-    # 3. Área Dual de Ingreso de Datos
+    # 3. Ingreso de Datos (Manual)
     st.markdown("### 📥 1. Ingreso de la Vacante")
 
-    # Explicación pedagógica sobre el Web Scraping en portales de empleo
-    with st.expander("ℹ️ ¿Por qué puede fallar la extracción automática desde LinkedIn u otros portales?"):
-        st.markdown(
-            """
-            * **Client-Side Rendering (SPA / React):** Sitios modernos como LinkedIn no envían el texto en el HTML inicial, sino que lo generan dinámicamente con JavaScript en el navegador del usuario.
-            * **Muros de Autenticación (Authwalls):** LinkedIn suele exigir una sesión activa o cookies para ver el contenido completo de la vacante, respondiendo con códigos `HTTP 403 Forbidden` o `999 Authwall`.
-            * **Protecciones Anti-Bot (Cloudflare / WAF):** Detectan descargas automatizadas que no provienen de un navegador real.
-            
-            👉 **Estrategia recomendada:** Puedes ingresar el enlace para intentar extraerlo automáticamente; si el portal deniega el acceso, simplemente **copia el texto de la vacante y pégalo** directamente en el recuadro inferior.
-            """
-        )
-
-    # Campo de URL con botón de extracción
-    col_url, col_btn_fetch = st.columns([4, 1])
-    with col_url:
-        url_input = st.text_input(
-            "Enlace web de la vacante (URL):",
-            value=st.session_state.get("job_url_input", ""),
-            placeholder="https://www.linkedin.com/jobs/view/... o portal de empleo",
-            key="input_url_field"
-        )
-    with col_btn_fetch:
-        st.write("")
-        st.write("")
-        btn_extraer_url = st.button("🌐 Extraer URL", use_container_width=True)
-
-    if btn_extraer_url:
-        if not url_input.strip():
-            st.warning("Por favor ingresa una URL válida primero.")
-        else:
-            with st.spinner("Intentando extraer contenido de la página web..."):
-                exito, resultado = extract_job_text_from_url(url_input)
-                if exito:
-                    st.session_state["job_text_input"] = resultado
-                    st.session_state["job_url_input"] = url_input.strip()
-                    st.success("✅ Texto extraído exitosamente de la URL.")
-                    st.rerun()
-                else:
-                    st.session_state["job_url_input"] = url_input.strip()
-                    st.warning(resultado)
+    # Campo opcional para registrar la URL de la postulación
+    url_input = st.text_input(
+        "Enlace web de la vacante (URL opcional):",
+        value=st.session_state.get("job_url_input", ""),
+        placeholder="https://www.linkedin.com/jobs/view/... o portal de empleo",
+        key="input_url_field"
+    )
 
     # Área de texto para pegar el Job Description
     job_text_val = st.text_area(
