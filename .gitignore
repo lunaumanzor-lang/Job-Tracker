@@ -1,7 +1,7 @@
-# Entorno virtual de Python
-.venv/
-env/
-venv/
+# Variables de entorno y llaves secretas
+.env
+.env.local
+
 
 # Archivos de caché de Python
 __pycache__/
@@ -14,3 +14,6 @@ Thumbs.db
 
 # Base de datos local (opcional)
 # job_tracker.db
+
+# Configuración del editor
+.vscode/

@@ -8,7 +8,7 @@ from datetime import datetime, date
 import streamlit as st
 import pandas as pd
 
-# Importamos las funciones de la base de datos de la Fase 2
+# Importamos las funciones de la base de datos de la Fase 2, 4, 5.1 y 7
 from database import (
     create_tables,
     insert_application,
@@ -16,7 +16,32 @@ from database import (
     get_application_by_id,
     update_application,
     delete_application,
-    get_dashboard_counts
+    get_dashboard_counts,
+    get_status_breakdown,
+    get_work_mode_breakdown,
+    get_salary_statistics,
+    get_monthly_applications,
+    get_monthly_interviews,
+    # Fase 5.1: My Profile & Skills
+    SKILL_CATEGORIES,
+    PROFICIENCY_LEVELS,
+    save_user_profile,
+    get_user_profile,
+    add_user_skill,
+    add_user_skills_bulk,
+    get_all_user_skills,
+    update_user_skill_proficiency,
+    update_user_skill_category,
+    delete_user_skill
+)
+
+# Módulos de extracción de CV, Web Scraping e Inteligencia Artificial
+from resume_parser import extract_resume_text
+from job_scraper import extract_job_text_from_url
+from ai_service import (
+    extract_skills_and_profile_from_resume,
+    analyze_job_description,
+    get_api_key
 )
 
 # ------------------------------------------------------------------------------
@@ -31,9 +56,9 @@ st.set_page_config(
 # Aseguramos la existencia de las tablas
 create_tables()
 
-# Título y encabezado
+# Título y encabezado principal
 st.title("💼 AI Job Application Tracker")
-st.caption("Fase 4a: Dashboard de Métricas y Gestión de Postulaciones")
+st.caption("Fase 5.1: My Profile (Master Skill Profile) & Application Tracker")
 
 # Valores exactos de Status requeridos por el proyecto
 STATUS_OPTIONS = [
@@ -51,22 +76,31 @@ WORK_MODE_OPTIONS = ["Remote", "Hybrid", "On-site", "TBD"]
 
 
 # ------------------------------------------------------------------------------
-# CONCEPTO STREAMLIT - st.tabs():
-# Creamos tres pestañas principales: Dashboard, Ver/Gestionar y Agregar.
+# MENÚ DE NAVEGACIÓN LATERAL (Sidebar)
 # ------------------------------------------------------------------------------
-tab_dash, tab_ver, tab_agregar = st.tabs([
-    "📊 Dashboard",
-    "📋 Ver y Gestionar Aplicaciones",
-    "➕ Agregar Nueva Aplicación"
-])
+st.sidebar.title("🧭 Navegación")
+st.sidebar.caption("Job Search & AI Intelligence")
+
+menu_opcion = st.sidebar.radio(
+    "Selecciona una sección:",
+    [
+        "📊 Dashboard",
+        "📈 Statistics",
+        "👤 My Profile",
+        "🤖 AI Job Analyzer",
+        "📋 Ver y Gestionar Aplicaciones",
+        "➕ Agregar Nueva Aplicación"
+    ],
+    index=0
+)
 
 
 # ==============================================================================
-# PESTAÑA 0: DASHBOARD (Sub-fase 4a: Conteos Simples en Tiempo Real)
+# PÁGINA 0: DASHBOARD (Vista Rápida: Conteos Clave y Pipeline)
 # ==============================================================================
-with tab_dash:
+if menu_opcion == "📊 Dashboard":
     st.subheader("📈 Resumen General de Postulaciones")
-    st.caption("Métricas clave calculadas en tiempo real directamente desde SQLite mediante consultas SQL COUNT().")
+    st.caption("Vista rápida de métricas clave calculadas en tiempo real directamente desde SQLite mediante consultas SQL COUNT().")
 
     # Obtenemos los conteos calculados por SQL
     metricas = get_dashboard_counts()
@@ -113,6 +147,44 @@ with tab_dash:
 
     st.divider()
 
+    # --------------------------------------------------------------------------
+    # DESGLOSE COMPLETO POR ESTADO (Status Breakdown)
+    # --------------------------------------------------------------------------
+    st.markdown("### 📌 Estado del Pipeline (Status Breakdown)")
+    st.caption("Cantidad exacta de postulaciones en cada etapa de tu proceso de búsqueda de empleo:")
+
+    desglose_status = get_status_breakdown()
+
+    # Fila 1: Etapas activas (Applied, Recruiter Screen, Technical Interview, Final Interview)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("📨 Applied", desglose_status.get("Applied", 0))
+    with c2:
+        st.metric("📞 Recruiter Screen", desglose_status.get("Recruiter Screen", 0))
+    with c3:
+        st.metric("💻 Technical Interview", desglose_status.get("Technical Interview", 0))
+    with c4:
+        st.metric("🤝 Final Interview", desglose_status.get("Final Interview", 0))
+
+    # Fila 2: Resultados finales (Offer, Rejected, Ghosted)
+    c5, c6, c7, _ = st.columns(4)
+    with c5:
+        st.metric("🎉 Offer", desglose_status.get("Offer", 0))
+    with c6:
+        st.metric("❌ Rejected", desglose_status.get("Rejected", 0))
+    with c7:
+        st.metric("👻 Ghosted", desglose_status.get("Ghosted", 0))
+
+    # Gráfico interactivo de barras para ver la distribución visual
+    st.markdown("#### 📊 Distribución Visual por Estado")
+    df_status = pd.DataFrame(
+        list(desglose_status.items()),
+        columns=["Estado", "Cantidad"]
+    ).set_index("Estado")
+    st.bar_chart(df_status)
+
+    st.divider()
+
     # Explicación pedagógica de las consultas de agregación utilizadas
     with st.expander("ℹ️ ¿Cómo se calculan estas métricas en SQL? (Explicación técnica)"):
         st.markdown("""
@@ -124,14 +196,612 @@ with tab_dash:
         * **Rejections:** `SELECT COUNT(*) FROM applications WHERE status = 'Rejected';`
         * **Follow-ups:** `SELECT COUNT(*) FROM applications WHERE follow_up_date IS NOT NULL AND date(follow_up_date) <= date('now');`  
           Compara la fecha de seguimiento contra la fecha actual (`date('now')` en SQLite).
+        * **Desglose completo por estado:** `SELECT status, COUNT(*) FROM applications GROUP BY status;`  
+          La cláusula **`GROUP BY`** agrupa automáticamente todas las filas por cada estado distinto y calcula su total en una sola consulta ultra rápida.
         """)
 
 
+# ==============================================================================
+# PÁGINA 1: STATISTICS (Fase 7: Página Dedicada de Estadísticas Avanzadas)
+# ==============================================================================
+elif menu_opcion == "📈 Statistics":
+    st.header("📈 Job Search Statistics")
+    st.caption("Página dedicada a estadísticas completas, tasas de conversión, métricas salariales y tendencias temporales.")
+
+    # 1. Reutilización de métricas de la Fase 4 (sin duplicar queries)
+    metricas = get_dashboard_counts()
+    total_apps = metricas["total_applications"]
+    interviews = metricas["interviews"]
+    offers = metricas["offers"]
+    rejections = metricas["rejections"]
+
+    # Cálculo de Interview Rate
+    # Regla de negocio: (Interviews / Total Applications) * 100
+    interview_rate = (interviews / total_apps * 100) if total_apps > 0 else 0.0
+
+    st.subheader("🎯 Métricas Principales del Proceso")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("Applications", total_apps)
+    with c2:
+        st.metric("Interviews 🎯", interviews, help="Incluye Recruiter Screen, Technical Interview y Final Interview")
+    with c3:
+        st.metric("Offers 🎉", offers)
+    with c4:
+        st.metric("Rejected ❌", rejections)
+    with c5:
+        st.metric("Interview Rate 🚀", f"{interview_rate:.1f}%", help="% de aplicaciones que lograron pasar al menos a entrevista")
+
+    st.divider()
+
+    # 2. Modalidades de Trabajo (Work Mode Breakdown)
+    st.subheader("🏢 Distribución por Modalidad de Trabajo")
+    work_modes = get_work_mode_breakdown()
+
+    col_wm1, col_wm2, col_wm3 = st.columns(3)
+    with col_wm1:
+        st.metric("Remote Applications 🏠", work_modes.get("Remote", 0))
+    with col_wm2:
+        st.metric("Hybrid Applications 🏢/🏠", work_modes.get("Hybrid", 0))
+    with col_wm3:
+        st.metric("On-site Applications 🏢", work_modes.get("On-site", 0))
+
+    # Gráfico de barras de modalidades
+    df_wm = pd.DataFrame(
+        list(work_modes.items()),
+        columns=["Modalidad", "Total"]
+    ).set_index("Modalidad")
+    st.bar_chart(df_wm)
+
+    st.divider()
+
+    # 3. Estadísticas Salariales (USD)
+    st.subheader("💰 Estadísticas Salariales (USD)")
+    st.caption("Métricas calculadas exclusivamente sobre vacantes con compensación en USD (se ignoran valores vacíos, rangos cualitativos o monedas locales como CRC).")
+    
+    salarios = get_salary_statistics()
+    s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+    with s_col1:
+        st.metric("Salario Mínimo", f"${salarios['min']:,.2f} USD")
+    with s_col2:
+        st.metric("Salario Promedio", f"${salarios['avg']:,.2f} USD")
+    with s_col3:
+        st.metric("Salario Máximo", f"${salarios['max']:,.2f} USD")
+    with s_col4:
+        st.metric("Postulaciones con Salario", f"{salarios['count']} de {total_apps}")
+
+    st.divider()
+
+    # 4. Análisis Temporal Mes a Mes (Aplicaciones y Entrevistas por Mes)
+    st.subheader("📅 Evolución Mensual: Postulaciones y Entrevistas")
+    st.caption("Visualiza el volumen de postulaciones enviadas y entrevistas generadas a lo largo del tiempo.")
+
+    monthly_apps = get_monthly_applications()
+    monthly_ints = get_monthly_interviews()
+
+    df_apps = pd.DataFrame(monthly_apps).rename(columns={"total": "Postulaciones"}) if monthly_apps else pd.DataFrame(columns=["mes", "Postulaciones"])
+    df_ints = pd.DataFrame(monthly_ints).rename(columns={"total": "Entrevistas"}) if monthly_ints else pd.DataFrame(columns=["mes", "Entrevistas"])
+
+    if not df_apps.empty:
+        # Combinamos ambas series temporales usando un merge de pandas sobre la columna 'mes'
+        df_evolucion = pd.merge(df_apps, df_ints, on="mes", how="left").fillna(0)
+        df_evolucion["Entrevistas"] = df_evolucion["Entrevistas"].astype(int)
+        df_evolucion = df_evolucion.rename(columns={"mes": "Mes"})
+
+        col_tabla_mes, col_grafico_mes = st.columns([1, 2], gap="medium")
+        with col_tabla_mes:
+            st.markdown("##### 📋 Tabla Detallada por Mes")
+            st.dataframe(df_evolucion, use_container_width=True, hide_index=True)
+
+        with col_grafico_mes:
+            st.markdown("##### 📈 Gráfico de Tendencia Mensual")
+            st.line_chart(df_evolucion.set_index("Mes"))
+    else:
+        st.info("No hay suficientes datos con fecha para graficar la evolución mensual.")
+
+    st.divider()
+
+    # 5. Pendiente Decidido: Empresas por Industria
+    st.subheader("🏭 Empresas por Industria")
+    st.info("💡 **Decisión de Arquitectura tomada:** La métrica de 'Empresas por Industria' será clasificada automáticamente en la **Fase 5 con Inteligencia Artificial (LLM)**, extrayendo el sector de cada empresa a partir de su nombre y descripción del puesto, evitando trabajo manual de etiquetado.")
+
+    # 6. Explicación Técnica y Pedagógica
+    with st.expander("ℹ️ ¿Cómo se procesaron estas estadísticas? (Conceptos Técnicos)"):
+        st.markdown("""
+        * **Reutilización de consultas:** Las 4 métricas base (`Applications`, `Interviews`, `Offers`, `Rejected`) reutilizan la función `get_dashboard_counts()` creada en la Fase 4, garantizando que no haya código SQL duplicado.
+        * **Interview Rate (%):** Cálculo matemático simple en Python: `(interviews / total_apps) * 100`.
+        * **Modalidades de trabajo:** `SELECT work_mode, COUNT(*) FROM applications GROUP BY work_mode;`
+        * **Limpieza de Salarios:** Python lee los textos de salarios, filtra con expresiones regulares (`re.findall`) los valores numéricos reales en USD (promediando rangos como '4500-5000 USD') y calcula `min()`, `max()` y promedio (`sum() / len()`), ignorando campos nulos o monedas no homologadas como CRC.
+        * **Agrupación por Mes:** SQL extrae el año y mes usando `substr(application_date, 1, 7)` y agrupa con `GROUP BY mes ORDER BY mes ASC`. Luego Pandas combina las series de postulaciones y entrevistas con `pd.merge()`.
+        """)
+
 
 # ==============================================================================
-# PESTAÑA 1: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
+# PÁGINA 2: MY PROFILE (Fase 5.1: Master Skill Profile)
 # ==============================================================================
-with tab_ver:
+elif menu_opcion == "👤 My Profile":
+    st.header("👤 Mi Perfil y Master Skill Profile")
+    st.caption("Administra tu perfil profesional y tu inventario maestro de habilidades para comparar con futuras vacantes.")
+
+    # --------------------------------------------------------------------------
+    # 1. PERFIL GENERAL DEL USUARIO (user_profile)
+    # --------------------------------------------------------------------------
+    perfil = get_user_profile()
+    with st.expander("📝 Datos Generales del Perfil", expanded=(perfil is not None)):
+        if perfil:
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                st.markdown(f"**Nombre:** {perfil.get('full_name') or 'No especificado'}")
+                st.markdown(f"**Título:** {perfil.get('current_title') or 'No especificado'}")
+                st.markdown(f"**Ubicación:** {perfil.get('location') or 'No especificada'}")
+            with p_col2:
+                st.markdown(f"**Email:** {perfil.get('email') or 'No especificado'}")
+                st.markdown(f"**Teléfono:** {perfil.get('phone') or 'No especificado'}")
+                st.caption(f"Última actualización: {perfil.get('updated_at') or 'N/A'}")
+            if perfil.get("summary"):
+                st.info(f"**Resumen Profesional:**\n\n{perfil['summary']}")
+        else:
+            st.info("Aún no tienes un perfil guardado. Puedes subir tu currículum abajo para que la IA lo extraiga automáticamente, o ingresar tus datos manualmente.")
+
+        with st.popover("✏️ Editar datos de perfil"):
+            with st.form("form_editar_perfil"):
+                ed_name = st.text_input("Nombre Completo", value=perfil.get("full_name") if perfil else "")
+                ed_title = st.text_input("Título Profesional / Rol", value=perfil.get("current_title") if perfil else "")
+                ed_email = st.text_input("Email", value=perfil.get("email") if perfil else "")
+                ed_phone = st.text_input("Teléfono", value=perfil.get("phone") if perfil else "")
+                ed_loc = st.text_input("Ubicación", value=perfil.get("location") if perfil else "")
+                ed_sum = st.text_area("Resumen Profesional", value=perfil.get("summary") if perfil else "", height=100)
+                if st.form_submit_button("Guardar Perfil"):
+                    save_user_profile(ed_name, ed_title, ed_email, ed_phone, ed_loc, ed_sum)
+                    st.success("¡Perfil actualizado con éxito!")
+                    st.rerun()
+
+    st.divider()
+
+    # --------------------------------------------------------------------------
+    # 2. SUBIDA DE RESUME Y EXTRACCIÓN AUTOMÁTICA CON IA
+    # --------------------------------------------------------------------------
+    st.subheader("📄 Subir Currículum y Extraer Skills con IA")
+    st.caption("Sube tu CV en formato PDF, Word (.docx) o Texto (.txt) para que Gemini extraiga tus habilidades automáticamente.")
+
+    archivo_subido = st.file_uploader(
+        "Selecciona tu archivo de CV:",
+        type=["pdf", "docx", "txt"],
+        help="Formatos permitidos: .pdf (con pypdf), .docx (con python-docx), .txt"
+    )
+
+    if archivo_subido is not None:
+        try:
+            texto_cv = extract_resume_text(archivo_subido)
+            st.success(f"✅ Archivo '{archivo_subido.name}' leído exitosamente ({len(texto_cv):,} caracteres extraídos).")
+            with st.expander("👁️ Previsualizar texto extraído del documento"):
+                st.text_area("Contenido extraído", value=texto_cv, height=200, disabled=True)
+
+            # Verificación de API Key
+            api_key_activa = get_api_key()
+            if not api_key_activa:
+                st.warning("⚠️ No se detectó GEMINI_API_KEY en el entorno ni en archivo .env.")
+                key_input = st.text_input("Ingresa tu clave de API de Gemini para este análisis:", type="password")
+                if key_input:
+                    api_key_activa = key_input.strip()
+                    os.environ["GEMINI_API_KEY"] = api_key_activa
+                    # Guardamos automáticamente en .env para que persista
+                    try:
+                        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+                        with open(env_file, "w", encoding="utf-8") as f_env:
+                            f_env.write(f"GEMINI_API_KEY={api_key_activa}\n")
+                        st.info("💡 Tu clave ha sido guardada en .env para futuros análisis.")
+                    except Exception:
+                        pass
+
+            col_btn, _ = st.columns([1, 2])
+            with col_btn:
+                btn_analizar = st.button("🚀 Analizar CV con IA (Gemini)", type="primary", disabled=not bool(api_key_activa))
+
+            if btn_analizar:
+                with st.spinner("🤖 La IA está leyendo tu currículum, identificando tus skills y clasificándolas en categorías estándar..."):
+                    try:
+                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa)
+                        
+                        # Guardamos perfil detectado si no existe
+                        prof_data = resultado.get("profile", {})
+                        if prof_data:
+                            save_user_profile(
+                                full_name=prof_data.get("full_name"),
+                                current_title=prof_data.get("current_title"),
+                                email=prof_data.get("email"),
+                                phone=prof_data.get("phone"),
+                                location=prof_data.get("location"),
+                                summary=prof_data.get("summary")
+                            )
+
+                        # Guardamos skills en bulk
+                        skills_extraidas = resultado.get("skills", [])
+                        total_insertadas = add_user_skills_bulk(skills_extraidas, source="Resume")
+                        
+                        st.success(f"🎉 ¡Análisis finalizado! Se extrajeron e indexaron {total_insertadas} habilidades técnicas en tu base de datos.")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"❌ Ocurrió un error al procesar con IA: {err}")
+        except Exception as err_lectura:
+            st.error(f"❌ Error al leer el archivo: {err_lectura}")
+
+    st.divider()
+
+    # --------------------------------------------------------------------------
+    # 3. GESTIÓN MANUAL DE SKILLS (CRUD DE TAGS)
+    # --------------------------------------------------------------------------
+    st.subheader("🏷️ Master Skill Inventory (Inventario de Habilidades)")
+    todas_las_skills = get_all_user_skills()
+
+    total_s = len(todas_las_skills)
+    resume_s = len([s for s in todas_las_skills if s.get("source") == "Resume"])
+    manual_s = len([s for s in todas_las_skills if s.get("source") == "Manual"])
+
+    col_ms1, col_ms2, col_ms3 = st.columns(3)
+    with col_ms1:
+        st.metric("Total de Skills Dominadas", total_s)
+    with col_ms2:
+        st.metric("Extraídas de CV 📄", resume_s)
+    with col_ms3:
+        st.metric("Agregadas Manualmente ✏️", manual_s)
+
+    # Formulario para agregar una skill manualmente
+    with st.expander("➕ Agregar una nueva tecnología / habilidad manualmente"):
+        with st.form("form_nueva_skill", clear_on_submit=True):
+            col_sk1, col_sk2, col_sk3 = st.columns([2, 1, 1])
+            with col_sk1:
+                input_skill = st.text_input("Nombre de la Tecnología / Skill *", placeholder="Ej. Terraform, Kubernetes, GraphQL...")
+            with col_sk2:
+                input_cat = st.selectbox("Categoría *", options=SKILL_CATEGORIES)
+            with col_sk3:
+                input_prof = st.selectbox("Nivel de Dominio", options=PROFICIENCY_LEVELS, index=1)
+            
+            btn_guardar_skill = st.form_submit_button("💾 Guardar Skill Manual", use_container_width=True)
+
+        if btn_guardar_skill:
+            if not input_skill.strip():
+                st.error("El nombre de la habilidad no puede estar vacío.")
+            else:
+                add_user_skill(
+                    skill_name=input_skill.strip(),
+                    category=input_cat,
+                    source="Manual",
+                    proficiency=input_prof
+                )
+                st.success(f"✅ ¡Habilidad '{input_skill.strip()}' guardada con éxito!")
+                st.rerun()
+
+    # Despliegue de skills existentes
+    if not todas_las_skills:
+        st.info("Aún no tienes habilidades registradas. Sube tu currículum arriba o agrega tus tecnologías dominadas con el formulario.")
+    else:
+        st.markdown("##### 📌 Habilidades agrupadas por Categoría:")
+        
+        # Agrupamos por categoría
+        skills_por_cat = {}
+        for s in todas_las_skills:
+            skills_por_cat.setdefault(s["category"], []).append(s)
+
+        # Iteramos sobre las categorías que tienen al menos una skill
+        for cat_nombre, items_cat in sorted(skills_por_cat.items()):
+            with st.container():
+                st.markdown(f"**{cat_nombre}** ({len(items_cat)} habilidades)")
+                
+                # Desplegamos cada skill en columnas compactas
+                for item in items_cat:
+                    c_badge, c_name, c_cat, c_prof, c_del = st.columns([1, 2.2, 1.8, 1.4, 0.6])
+                    
+                    with c_badge:
+                        if item.get("source") == "Resume":
+                            st.caption("📄 **Resume**")
+                        else:
+                            st.caption("✏️ **Manual**")
+                    
+                    with c_name:
+                        st.markdown(f"**{item['skill_name']}**")
+
+                    with c_cat:
+                        # Dropdown para cambiar o reasignar la categoría
+                        cat_actual = item.get("category", "DevOps")
+                        idx_cat = SKILL_CATEGORIES.index(cat_actual) if cat_actual in SKILL_CATEGORIES else 0
+                        nueva_cat = st.selectbox(
+                            "Categoría",
+                            options=SKILL_CATEGORIES,
+                            index=idx_cat,
+                            key=f"cat_{item['id']}",
+                            label_visibility="collapsed"
+                        )
+                        if nueva_cat != cat_actual:
+                            update_user_skill_category(item["id"], nueva_cat)
+                            st.rerun()
+                    
+                    with c_prof:
+                        # Dropdown para cambiar el nivel de proficiency
+                        prof_actual = item.get("proficiency", "Intermediate")
+                        idx_prof = PROFICIENCY_LEVELS.index(prof_actual) if prof_actual in PROFICIENCY_LEVELS else 1
+                        nuevo_nivel = st.selectbox(
+                            "Nivel",
+                            options=PROFICIENCY_LEVELS,
+                            index=idx_prof,
+                            key=f"prof_{item['id']}",
+                            label_visibility="collapsed"
+                        )
+                        if nuevo_nivel != prof_actual:
+                            update_user_skill_proficiency(item["id"], nuevo_nivel)
+                            st.rerun()
+
+                    with c_del:
+                        if st.button("🗑️", key=f"del_sk_{item['id']}", help=f"Eliminar {item['skill_name']}"):
+                            delete_user_skill(item["id"])
+                            st.rerun()
+
+                st.divider()
+
+
+# ==============================================================================
+# PÁGINA 2.5: AI JOB ANALYZER & MATCH EVALUATOR (Fase 5.2)
+# ==============================================================================
+elif menu_opcion == "🤖 AI Job Analyzer":
+    st.subheader("🤖 AI Job Analyzer & Match Evaluator")
+    st.caption(
+        "Evalúa cualquier vacante laboral asistido por IA, compara sus requerimientos en tiempo real "
+        "contra tu Master Skill Profile y precarga la postulación en tu Tracker con un solo clic."
+    )
+
+    # 1. Verificación del perfil y habilidades registradas en SQLite
+    user_skills = get_all_user_skills()
+    if not user_skills:
+        st.warning(
+            "⚠️ Tu Master Skill Profile no contiene habilidades registradas aún. "
+            "Para obtener un análisis comparativo preciso, te recomendamos ir primero a la sección "
+            "**'👤 My Profile'** y subir tu currículum o ingresar tus habilidades clave."
+        )
+    else:
+        st.info(f"💡 Comparando vacantes contra tu perfil activo de **{len(user_skills)} habilidades** registradas.")
+
+    # 2. Verificación de API Key
+    api_key_env = get_api_key()
+    api_key_usuario = None
+    if not api_key_env:
+        with st.expander("🔑 Configuración de API Key de Gemini", expanded=True):
+            api_key_usuario = st.text_input(
+                "Ingresa tu clave de API de Gemini:",
+                type="password",
+                help="Obtén tu clave gratuita en https://aistudio.google.com/app/apikey"
+            )
+
+    # 3. Área Dual de Ingreso de Datos
+    st.markdown("### 📥 1. Ingreso de la Vacante")
+
+    # Explicación pedagógica sobre el Web Scraping en portales de empleo
+    with st.expander("ℹ️ ¿Por qué puede fallar la extracción automática desde LinkedIn u otros portales?"):
+        st.markdown(
+            """
+            * **Client-Side Rendering (SPA / React):** Sitios modernos como LinkedIn no envían el texto en el HTML inicial, sino que lo generan dinámicamente con JavaScript en el navegador del usuario.
+            * **Muros de Autenticación (Authwalls):** LinkedIn suele exigir una sesión activa o cookies para ver el contenido completo de la vacante, respondiendo con códigos `HTTP 403 Forbidden` o `999 Authwall`.
+            * **Protecciones Anti-Bot (Cloudflare / WAF):** Detectan descargas automatizadas que no provienen de un navegador real.
+            
+            👉 **Estrategia recomendada:** Puedes ingresar el enlace para intentar extraerlo automáticamente; si el portal deniega el acceso, simplemente **copia el texto de la vacante y pégalo** directamente en el recuadro inferior.
+            """
+        )
+
+    # Campo de URL con botón de extracción
+    col_url, col_btn_fetch = st.columns([4, 1])
+    with col_url:
+        url_input = st.text_input(
+            "Enlace web de la vacante (URL):",
+            value=st.session_state.get("job_url_input", ""),
+            placeholder="https://www.linkedin.com/jobs/view/... o portal de empleo",
+            key="input_url_field"
+        )
+    with col_btn_fetch:
+        st.write("")
+        st.write("")
+        btn_extraer_url = st.button("🌐 Extraer URL", use_container_width=True)
+
+    if btn_extraer_url:
+        if not url_input.strip():
+            st.warning("Por favor ingresa una URL válida primero.")
+        else:
+            with st.spinner("Intentando extraer contenido de la página web..."):
+                exito, resultado = extract_job_text_from_url(url_input)
+                if exito:
+                    st.session_state["job_text_input"] = resultado
+                    st.session_state["job_url_input"] = url_input.strip()
+                    st.success("✅ Texto extraído exitosamente de la URL.")
+                    st.rerun()
+                else:
+                    st.session_state["job_url_input"] = url_input.strip()
+                    st.warning(resultado)
+
+    # Área de texto para pegar el Job Description
+    job_text_val = st.text_area(
+        "Texto de la Descripción de la Vacante (Job Description): *",
+        value=st.session_state.get("job_text_input", ""),
+        height=220,
+        placeholder="Pega aquí el texto completo de la vacante (título, responsabilidades, requisitos técnicos, etc.)...",
+        key="input_job_text_area"
+    )
+
+    # Botones de acción
+    col_act1, col_act2 = st.columns([3, 1])
+    with col_act1:
+        btn_analizar_vacante = st.button("⚡ Analizar y Evaluar Match con IA", type="primary", use_container_width=True)
+    with col_act2:
+        if st.button("🧹 Limpiar Análisis", use_container_width=True):
+            st.session_state.pop("job_analysis_result", None)
+            st.session_state.pop("job_text_input", None)
+            st.session_state.pop("job_url_input", None)
+            st.rerun()
+
+    # Ejecución del análisis al presionar el botón
+    if btn_analizar_vacante:
+        if not job_text_val.strip():
+            st.error("⚠️ Por favor pega el texto de la vacante o extrae una URL antes de analizar.")
+        else:
+            api_key_activa = api_key_usuario or api_key_env
+            if not api_key_activa:
+                st.error("⚠️ Debes proporcionar tu clave de API de Gemini para realizar el análisis.")
+            else:
+                with st.spinner("🧠 Analizando vacante y comparando contra tu Master Skill Profile con Gemini..."):
+                    try:
+                        resultado_analisis = analyze_job_description(
+                            job_text=job_text_val.strip(),
+                            user_skills=user_skills,
+                            api_key=api_key_activa
+                        )
+                        st.session_state["job_analysis_result"] = resultado_analisis
+                        st.session_state["job_text_input"] = job_text_val
+                        if url_input.strip():
+                            st.session_state["job_url_input"] = url_input.strip()
+                        st.success("🎉 ¡Análisis y cálculo de match completados exitosamente!")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"❌ Error durante el análisis: {err}")
+
+    # 4. Visualización del Match y Resultados
+    if "job_analysis_result" in st.session_state:
+        analisis = st.session_state["job_analysis_result"]
+        job_info = analisis.get("job_info", {})
+        matching = analisis.get("skill_matching", {})
+
+        strong_matches = matching.get("strong_matches", [])
+        partial_matches = matching.get("partial_matches", [])
+        missing_skills = matching.get("missing_skills", [])
+
+        st.divider()
+        st.markdown("### 📊 2. Evaluación de Compatibilidad (Match Score)")
+
+        total_requisitos = len(strong_matches) + len(partial_matches) + len(missing_skills)
+        if total_requisitos > 0:
+            score_calculado = round(((len(strong_matches) + 0.5 * len(partial_matches)) / total_requisitos) * 100)
+        else:
+            score_calculado = 0
+
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            st.metric("🎯 Match Score Estimado", f"{score_calculado}%")
+        with m_col2:
+            st.metric("🟢 Strong Matches", f"{len(strong_matches)} skills")
+        with m_col3:
+            st.metric("🟡 Partial Matches", f"{len(partial_matches)} skills")
+        with m_col4:
+            st.metric("🔴 Missing Skills", f"{len(missing_skills)} brechas")
+
+        # Visualización en 2 Columnas: Fortalezas (Izquierda) vs Brechas (Derecha)
+        col_match_left, col_match_right = st.columns(2)
+
+        with col_match_left:
+            st.markdown("#### 🟢 Habilidades que Posees (Matches)")
+            
+            if strong_matches:
+                st.markdown("**Fortalezas Principales (Intermediate / Advanced):**")
+                for s in strong_matches:
+                    nombre = s.get("skill", "")
+                    prof = s.get("proficiency", "Intermediate")
+                    razon = s.get("reason", "")
+                    razon_str = f" — _{razon}_" if razon else ""
+                    st.markdown(f"✅ **{nombre}** `{prof}`{razon_str}")
+            
+            if partial_matches:
+                st.markdown("**Coincidencias en Desarrollo (Beginner):**")
+                for s in partial_matches:
+                    nombre = s.get("skill", "")
+                    prof = s.get("proficiency", "Beginner")
+                    razon = s.get("reason", "")
+                    razon_str = f" — _{razon}_" if razon else ""
+                    st.markdown(f"⚠️ **{nombre}** `{prof}`{razon_str}")
+
+            if not strong_matches and not partial_matches:
+                st.info("No se encontraron coincidencias directas con tus habilidades registradas.")
+
+        with col_match_right:
+            st.markdown("#### 🔴 Requerimientos Faltantes (Gaps)")
+            if missing_skills:
+                for s in missing_skills:
+                    nombre = s.get("skill", "")
+                    importancia = s.get("importance", "Required")
+                    razon = s.get("reason", "")
+                    razon_str = f" — _{razon}_" if razon else ""
+                    st.markdown(f"❌ **{nombre}** `[{importancia}]`{razon_str}")
+            else:
+                st.success("🎉 ¡Excelente! No se detectaron tecnologías o requisitos faltantes para esta vacante.")
+
+        # 5. Formulario Autocompletado para Guardar la Aplicación
+        st.divider()
+        st.markdown("### 📝 3. Pre-registro en Aplicaciones")
+        st.caption(
+            "Revisa y modifica los campos extraídos por la IA antes de guardarlos en tu base de datos SQLite."
+        )
+
+        with st.form("form_ai_guardar_aplicacion"):
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                company_val = st.text_input("Company *", value=job_info.get("company", ""))
+            with f_col2:
+                position_val = st.text_input("Position *", value=job_info.get("position", ""))
+
+            f_col3, f_col4 = st.columns(2)
+            with f_col3:
+                status_default_idx = STATUS_OPTIONS.index("Applied") if "Applied" in STATUS_OPTIONS else 0
+                status_val = st.selectbox("Status", options=STATUS_OPTIONS, index=status_default_idx)
+            with f_col4:
+                app_date_val = st.date_input("Application Date", value=date.today())
+
+            f_col5, f_col6 = st.columns(2)
+            with f_col5:
+                wm_detectado = job_info.get("work_mode", "Remote")
+                wm_idx = WORK_MODE_OPTIONS.index(wm_detectado) if wm_detectado in WORK_MODE_OPTIONS else 0
+                work_mode_val = st.selectbox("Work Mode", options=WORK_MODE_OPTIONS, index=wm_idx)
+            with f_col6:
+                salary_val = st.text_input("Salary (USD)", value=job_info.get("salary", ""))
+
+            f_col7, f_col8 = st.columns(2)
+            with f_col7:
+                url_guardar_val = st.text_input("Job URL", value=st.session_state.get("job_url_input", ""))
+            with f_col8:
+                location_val = st.text_input("Location", value=job_info.get("location", ""))
+
+            fortalezas_txt = ", ".join(s.get("skill", "") for s in strong_matches[:5])
+            faltantes_txt = ", ".join(s.get("skill", "") for s in missing_skills[:5])
+            notas_generadas = (
+                f"Analizado con AI Job Analyzer.\n"
+                f"Match Score: {score_calculado}%\n"
+                f"Fortalezas: {fortalezas_txt or 'N/A'}\n"
+                f"Faltantes: {faltantes_txt or 'N/A'}"
+            )
+            notes_val = st.text_area("Notes", value=notas_generadas, height=100)
+
+            btn_guardar_app = st.form_submit_button("💾 GUARDAR POSTULACIÓN EN TRACKER", use_container_width=True)
+
+        if btn_guardar_app:
+            if not company_val.strip():
+                st.error("⚠️ El campo Company es obligatorio.")
+            elif not position_val.strip():
+                st.error("⚠️ El campo Position es obligatorio.")
+            else:
+                fecha_str = app_date_val.strftime("%Y-%m-%d")
+                salario_limpio = salary_val.strip() if salary_val.strip() else None
+                nuevo_id = insert_application(
+                    company=company_val.strip(),
+                    position=position_val.strip(),
+                    status=status_val,
+                    application_date=fecha_str,
+                    salary=salario_limpio,
+                    work_mode=work_mode_val,
+                    location=location_val.strip() if location_val.strip() else None,
+                    job_url=url_guardar_val.strip() if url_guardar_val.strip() else None,
+                    notes=notes_val.strip() if notes_val.strip() else None
+                )
+                st.success(f"🎉 ¡Aplicación a **{company_val}** (#{nuevo_id}) guardada exitosamente en la base de datos!")
+                st.balloons()
+
+
+# ==============================================================================
+# PÁGINA 3: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
+# ==============================================================================
+elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
     # 1. Obtenemos todas las aplicaciones desde SQLite
     todas_las_apps = get_all_applications()
 
@@ -230,6 +900,7 @@ with tab_ver:
                             f"**Modalidad:** {app_actual['work_mode'] or 'No especificada'}\n\n"
                             f"**Salario registrado:** {app_actual['salary'] or 'No especificado'}\n\n"
                             f"**Fecha de postulación:** {app_actual['application_date'] or 'Sin fecha'}\n\n"
+                            f"**Fecha de Follow-up:** {app_actual.get('follow_up_date') or '⏰ No asignada'}\n\n"
                             f"**Ubicación:** {app_actual['location'] or 'N/A'}")
 
                     if app_actual.get("job_url"):
@@ -249,15 +920,12 @@ with tab_ver:
                         if st.button("🚨 Eliminar Definitivamente", type="primary", disabled=not confirmar_borrado):
                             delete_application(app_actual["id"])
                             st.success(f"Postulación #{app_actual['id']} eliminada con éxito.")
-                            # CONCEPTO - st.rerun():
-                            # Fuerza a Streamlit a recargar la página para que la tabla
-                            # y los selectores muestren los datos actualizados de SQLite.
                             st.rerun()
 
                 # PANEL DERECHO: FORMULARIO DE EDICIÓN (Requisito 4)
                 with col_edicion:
                     st.markdown("### ✏️ Editar Datos")
-                    st.caption("Modifica los campos necesarios (por ejemplo cambiar 'TBD' por la empresa real) y guarda los cambios.")
+                    st.caption("Modifica los campos necesarios (por ejemplo cambiar 'TBD' por la empresa real o agregar fecha de Follow-up).")
 
                     with st.form(f"form_editar_{app_actual['id']}"):
                         edit_company = st.text_input("Company *", value=app_actual["company"])
@@ -265,7 +933,6 @@ with tab_ver:
 
                         col_e1, col_e2 = st.columns(2)
                         with col_e1:
-                            # Parseamos la fecha existente o usamos hoy por defecto
                             fecha_default = date.today()
                             if app_actual.get("application_date"):
                                 try:
@@ -275,22 +942,33 @@ with tab_ver:
                             edit_date = st.date_input("Application Date", value=fecha_default)
 
                         with col_e2:
-                            # Buscamos el índice actual en STATUS_OPTIONS
                             idx_status = STATUS_OPTIONS.index(app_actual["status"]) if app_actual["status"] in STATUS_OPTIONS else 0
                             edit_status = st.selectbox("Status", options=STATUS_OPTIONS, index=idx_status)
 
                         col_e3, col_e4 = st.columns(2)
                         with col_e3:
-                            # Modalidad
                             mode_val = app_actual.get("work_mode") or "Remote"
                             idx_mode = WORK_MODE_OPTIONS.index(mode_val) if mode_val in WORK_MODE_OPTIONS else 0
                             edit_mode = st.selectbox("Work Mode", options=WORK_MODE_OPTIONS, index=idx_mode)
                         with col_e4:
                             edit_salary = st.text_input("Salary", value=app_actual.get("salary") or "")
 
-                        edit_location = st.text_input("Location", value=app_actual.get("location") or "")
+                        col_e5, col_e6 = st.columns(2)
+                        with col_e5:
+                            edit_location = st.text_input("Location", value=app_actual.get("location") or "")
+                        with col_e6:
+                            # Campo de fecha de seguimiento (Follow-up)
+                            fup_val = date.today()
+                            if app_actual.get("follow_up_date"):
+                                try:
+                                    fup_val = datetime.strptime(app_actual["follow_up_date"][:10], "%Y-%m-%d").date()
+                                except Exception:
+                                    pass
+                            asignar_fup = st.checkbox("Asignar Follow-up", value=bool(app_actual.get("follow_up_date")), key=f"chk_fup_{app_actual['id']}")
+                            edit_fup = st.date_input("Fecha Follow-up", value=fup_val, key=f"date_fup_{app_actual['id']}") if asignar_fup else None
+
                         edit_job_url = st.text_input("Job URL", value=app_actual.get("job_url") or "")
-                        edit_notes = st.text_area("Notes", value=app_actual.get("notes") or "", height=150)
+                        edit_notes = st.text_area("Notes", value=app_actual.get("notes") or "", height=120)
 
                         btn_guardar_edicion = st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True)
 
@@ -300,6 +978,7 @@ with tab_ver:
                         else:
                             # Actualizamos en SQLite
                             fecha_str = edit_date.strftime("%Y-%m-%d")
+                            fup_str = edit_fup.strftime("%Y-%m-%d") if edit_fup else None
                             update_application(
                                 app_id=app_actual["id"],
                                 company=edit_company.strip(),
@@ -310,16 +989,17 @@ with tab_ver:
                                 work_mode=edit_mode,
                                 location=edit_location.strip() if edit_location else None,
                                 job_url=edit_job_url.strip() if edit_job_url else None,
-                                notes=edit_notes.strip() if edit_notes else None
+                                notes=edit_notes.strip() if edit_notes else None,
+                                follow_up_date=fup_str
                             )
                             st.success(f"✅ ¡Postulación #{app_actual['id']} actualizada con éxito!")
                             st.rerun()
 
 
 # ==============================================================================
-# PESTAÑA 2: AGREGAR NUEVA APLICACIÓN (Requisito 1)
+# PÁGINA 3: AGREGAR NUEVA APLICACIÓN (Requisito 1)
 # ==============================================================================
-with tab_agregar:
+elif menu_opcion == "➕ Agregar Nueva Aplicación":
     st.subheader("➕ Formulario de Nueva Aplicación")
     st.caption("Ingresa los datos de una nueva vacante para registrarla en la base de datos.")
 
@@ -348,6 +1028,13 @@ with tab_agregar:
         with col8:
             location = st.text_input("Location", placeholder="Ej. San José, Costa Rica / Remote US", key="new_location")
 
+        # Campo opcional para programar un Follow-up desde la creación
+        col_fup1, col_fup2 = st.columns(2)
+        with col_fup1:
+            asignar_fup_nuevo = st.checkbox("Programar Follow-up", value=False, key="new_fup_chk")
+        with col_fup2:
+            fup_date_nuevo = st.date_input("Fecha de Follow-up", value=date.today(), key="new_fup_date") if asignar_fup_nuevo else None
+
         notes = st.text_area("Notes / Job Description", placeholder="Pega aquí requisitos clave o notas...", key="new_notes")
 
         btn_crear = st.form_submit_button("💾 SAVE APPLICATION", use_container_width=True)
@@ -373,6 +1060,7 @@ with tab_agregar:
                 st.error(f"⚠️ {err}")
         else:
             fecha_str = app_date.strftime("%Y-%m-%d")
+            fup_nuevo_str = fup_date_nuevo.strftime("%Y-%m-%d") if (asignar_fup_nuevo and fup_date_nuevo) else None
             nuevo_id = insert_application(
                 company=company.strip(),
                 position=position.strip(),
@@ -382,6 +1070,7 @@ with tab_agregar:
                 work_mode=work_mode,
                 location=location.strip() if location else None,
                 job_url=job_url.strip() if job_url else None,
-                notes=notes.strip() if notes else None
+                notes=notes.strip() if notes else None,
+                follow_up_date=fup_nuevo_str
             )
             st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito con ID #{nuevo_id}!")

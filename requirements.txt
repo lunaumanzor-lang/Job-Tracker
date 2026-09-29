@@ -3,5 +3,17 @@
 pandas>=2.2.0
 openpyxl>=3.1.0
 
-# Fase 3 / 4: Dashboard y visualizaciones
+# Fase 3 / 4 / 7: Dashboard, visualizaciones e interfaz
 streamlit>=1.35.0
+
+# Fase 5: Inteligencia Artificial y Procesamiento de Documentos
+pypdf>=4.0.0
+python-docx>=1.1.0
+python-dotenv>=1.0.0
+google-generativeai>=0.8.0
+
+# Fase 5.2: Web scraping y extracción de vacantes
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+
