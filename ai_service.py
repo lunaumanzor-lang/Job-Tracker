@@ -136,8 +136,12 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
 \"\"\"
 """
 
-    # Cascada de modelos activos para evitar 404 de modelos retirados y 503 por picos de demanda
+    # Cascada de modelos activos con cuota disponible (priorizamos modelos lite que tienen cuota amplia)
     modelos_a_probar = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
         "gemini-3.5-flash",
         "gemini-3.6-flash",
         "gemini-3.8-flash",
@@ -331,6 +335,10 @@ REGLAS DE RESPUESTA:
 """
 
     modelos_a_probar = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
         "gemini-3.5-flash",
         "gemini-3.6-flash",
         "gemini-3.8-flash",
