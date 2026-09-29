@@ -32,7 +32,10 @@ from database import (
     get_all_user_skills,
     update_user_skill_proficiency,
     update_user_skill_category,
-    delete_user_skill
+    delete_user_skill,
+    # Fase 5.3: Skills vinculadas a cada postulación
+    insert_application_skills,
+    get_skills_by_application
 )
 
 # Módulos de extracción de CV, Web Scraping e Inteligencia Artificial
@@ -41,6 +44,9 @@ from job_scraper import extract_job_text_from_url
 from ai_service import (
     extract_skills_and_profile_from_resume,
     analyze_job_description,
+    generate_skill_gaps_study,
+    generate_interview_questions,
+    evaluate_interview_answer,
     get_api_key
 )
 
@@ -794,6 +800,20 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                     job_url=url_guardar_val.strip() if url_guardar_val.strip() else None,
                     notes=notes_val.strip() if notes_val.strip() else None
                 )
+
+                # PASO 0: Persistir las habilidades evaluadas en la tabla 'skills'
+                skills_a_guardar = []
+                for s in strong_matches:
+                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "strong"})
+                for s in partial_matches:
+                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "partial"})
+                for s in missing_skills:
+                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "missing"})
+
+                if skills_a_guardar:
+                    total_guardadas = insert_application_skills(nuevo_id, skills_a_guardar)
+                    st.caption(f"💾 Se vincularon **{total_guardadas} habilidades** evaluadas a esta postulación en SQLite.")
+
                 st.success(f"🎉 ¡Aplicación a **{company_val}** (#{nuevo_id}) guardada exitosamente en la base de datos!")
                 st.balloons()
 
@@ -910,6 +930,30 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                         with st.expander("📝 Ver Notas / Descripción completa"):
                             st.write(app_actual["notes"])
 
+                    # ----------------------------------------------------------
+                    # FASE 5.3: HABILIDADES ASOCIADAS Y BOTÓN INTERVIEW COACH
+                    # ----------------------------------------------------------
+                    st.markdown("---")
+                    st.markdown("#### 🎯 Preparación de Entrevista")
+                    skills_vacante = get_skills_by_application(app_actual["id"])
+                    if skills_vacante:
+                        s_str = [s["skill"] for s in skills_vacante if s["match_status"] == "strong"]
+                        s_part = [s["skill"] for s in skills_vacante if s["match_status"] == "partial"]
+                        s_miss = [s["skill"] for s in skills_vacante if s["match_status"] == "missing"]
+                        if s_str:
+                            st.caption("🟢 **Fortalezas:** " + ", ".join(f"`{x}`" for x in s_str))
+                        if s_part:
+                            st.caption("🟡 **Match Parcial:** " + ", ".join(f"`{x}`" for x in s_part))
+                        if s_miss:
+                            st.caption("🔴 **Brechas:** " + ", ".join(f"`{x}`" for x in s_miss))
+                    else:
+                        st.caption("ℹ️ Sin habilidades analizadas previamente. El Coach utilizará los datos del puesto y notas.")
+
+                    if st.button("🎯 PREPARE ME FOR THIS JOB", key=f"btn_prep_{app_actual['id']}", type="primary", use_container_width=True):
+                        st.session_state["show_interview_coach"] = True
+                        st.session_state["coach_app_id"] = app_actual["id"]
+                        st.rerun()
+
                     # SECCIÓN DE ELIMINACIÓN CON CONFIRMACIÓN (Requisito 5)
                     st.markdown("---")
                     st.markdown("#### 🗑️ Zona de peligro")
@@ -994,6 +1038,183 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                             )
                             st.success(f"✅ ¡Postulación #{app_actual['id']} actualizada con éxito!")
                             st.rerun()
+
+                # --------------------------------------------------------------
+                # FASE 5.3: INTERVIEW COACH INTEGRADO
+                # --------------------------------------------------------------
+                if st.session_state.get("show_interview_coach") and st.session_state.get("coach_app_id") == app_actual["id"]:
+                    st.divider()
+                    col_c_head, col_c_close = st.columns([5, 1])
+                    with col_c_head:
+                        st.subheader(f"🎯 Interview Coach: {app_actual['position']} @ {app_actual['company']}")
+                        st.caption("Preparación técnica y situacional adaptada a los requerimientos de esta vacante y a tu Master Skill Profile.")
+                    with col_c_close:
+                        st.write("")
+                        if st.button("✖️ Cerrar Coach", key=f"close_coach_{app_actual['id']}", use_container_width=True):
+                            st.session_state["show_interview_coach"] = False
+                            st.session_state.pop("coach_session", None)
+                            st.rerun()
+
+                    # Inicialización de la sesión del coach si es una postulación distinta
+                    if ("coach_session" not in st.session_state or 
+                        st.session_state["coach_session"].get("app_id") != app_actual["id"]):
+                        st.session_state["coach_session"] = {
+                            "app_id": app_actual["id"],
+                            "study_guide": None,
+                            "questions": [],
+                            "current_index": 0,
+                            "current_feedback": None,
+                            "history": []
+                        }
+
+                    c_session = st.session_state["coach_session"]
+
+                    # Generación inicial con IA si aún no existen en la sesión
+                    if not c_session.get("questions") or not c_session.get("study_guide"):
+                        with st.spinner("🧠 Generando plan de entrenamiento, análisis de brechas y preguntas de entrevista con Gemini..."):
+                            app_skills = get_skills_by_application(app_actual["id"])
+                            user_skills = get_all_user_skills()
+                            missing_list = [s["skill"] for s in app_skills if s.get("match_status") == "missing"]
+
+                            try:
+                                guia_estudio = generate_skill_gaps_study(
+                                    missing_skills=missing_list,
+                                    position=app_actual["position"],
+                                    company=app_actual["company"]
+                                )
+                                preguntas_gen = generate_interview_questions(
+                                    position=app_actual["position"],
+                                    company=app_actual["company"],
+                                    app_skills=app_skills,
+                                    user_skills=user_skills,
+                                    notes=app_actual.get("notes")
+                                )
+                                c_session["study_guide"] = guia_estudio
+                                c_session["questions"] = preguntas_gen
+                                c_session["current_index"] = 0
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al inicializar el Interview Coach: {e}")
+
+                    # Renderizado de las 3 secciones del Coach
+                    if c_session.get("questions") and c_session.get("study_guide"):
+                        tab_gaps, tab_bank, tab_sim = st.tabs([
+                            "📚 Skill Gaps Study (Guía Rápida)",
+                            f"❓ Banco de Preguntas ({len(c_session['questions'])})",
+                            "🎙️ Simulador de Entrevista (Practice)"
+                        ])
+
+                        # PESTAÑA 1: GUÍA DE ESTUDIO DE BRECHAS
+                        with tab_gaps:
+                            st.markdown("### 📚 Guía de Estudio de Brechas Técnicas")
+                            st.caption("Conceptos esenciales, vocabulario indispensable y cómo defender cada tecnología faltante en la entrevista.")
+                            st.markdown(c_session["study_guide"])
+
+                        # PESTAÑA 2: BANCO DE PREGUNTAS
+                        with tab_bank:
+                            st.markdown("### ❓ Preguntas de Entrevista Personalizadas")
+                            st.caption("Preguntas técnicas y situacionales cruzando los requisitos del puesto con tu perfil real.")
+                            for q in c_session["questions"]:
+                                with st.expander(f"Q#{q.get('id', '')} - [{q.get('category', 'Técnica')}] {q.get('focus_skill', '')}"):
+                                    st.markdown(f"**Pregunta:**\n\n### {q.get('question')}")
+                                    st.info(f"💡 **Tip del entrevistador:** {q.get('tip')}")
+
+                        # PESTAÑA 3: SIMULADOR DE PRÁCTICA
+                        with tab_sim:
+                            st.markdown("### 🎙️ Simulador de Práctica Interactivo")
+                            st.caption("Escribe tus respuestas y recibe retroalimentación constructiva de la IA en tiempo real.")
+
+                            cur_idx = c_session["current_index"]
+                            total_q = len(c_session["questions"])
+
+                            if cur_idx < total_q:
+                                q_actual = c_session["questions"][cur_idx]
+                                st.progress((cur_idx) / total_q)
+                                st.markdown(f"**Pregunta {cur_idx + 1} de {total_q}** | Categoría: `{q_actual.get('category')}`")
+                                st.info(f"**Enfoque:** `{q_actual.get('focus_skill')}`\n\n#### {q_actual.get('question')}")
+
+                                with st.expander("💡 Tip del entrevistador (¿Qué buscan evaluar?)"):
+                                    st.caption(q_actual.get("tip"))
+
+                                with st.form(key=f"form_practice_{app_actual['id']}_{cur_idx}"):
+                                    resp_usuario = st.text_area(
+                                        "Tu respuesta:",
+                                        placeholder="Escribe tu respuesta como si estuvieras hablando con el entrevistador...",
+                                        height=160,
+                                        key=f"txt_resp_{app_actual['id']}_{cur_idx}"
+                                    )
+                                    btn_enviar_resp = st.form_submit_button("🚀 Enviar respuesta para evaluación", use_container_width=True)
+
+                                if btn_enviar_resp:
+                                    if not resp_usuario.strip():
+                                        st.warning("⚠️ Por favor escribe tu respuesta antes de enviarla.")
+                                    else:
+                                        with st.spinner("🧠 Evaluando tu respuesta con Gemini..."):
+                                            try:
+                                                evaluacion = evaluate_interview_answer(
+                                                    question=q_actual.get("question"),
+                                                    category=q_actual.get("category", ""),
+                                                    focus_skill=q_actual.get("focus_skill", ""),
+                                                    user_answer=resp_usuario.strip()
+                                                )
+                                                c_session["current_feedback"] = evaluacion
+                                                c_session["history"].append({
+                                                    "q_num": cur_idx + 1,
+                                                    "question": q_actual.get("question"),
+                                                    "answer": resp_usuario.strip(),
+                                                    "feedback": evaluacion
+                                                })
+                                                st.rerun()
+                                            except Exception as err:
+                                                st.error(f"Error al evaluar: {err}")
+
+                                # Mostrar feedback si existe para la pregunta actual
+                                if c_session.get("current_feedback"):
+                                    fb = c_session["current_feedback"]
+                                    st.markdown("---")
+                                    st.markdown("#### 📋 Feedback de la IA:")
+                                    st.metric("Calificación", fb.get("rating", "Evaluada"))
+
+                                    col_fb1, col_fb2 = st.columns(2)
+                                    with col_fb1:
+                                        st.markdown("**🟢 Fortalezas identificadas:**")
+                                        for st_item in fb.get("strengths", []):
+                                            st.markdown(f"✅ {st_item}")
+                                    with col_fb2:
+                                        st.markdown("**🟡 Oportunidades de mejora:**")
+                                        for imp_item in fb.get("areas_to_improve", []):
+                                            st.markdown(f"⚠️ {imp_item}")
+
+                                    if fb.get("suggested_framework"):
+                                        st.info(f"📐 **Estructura recomendada:** {fb.get('suggested_framework')}")
+
+                                    if fb.get("model_answer"):
+                                        with st.expander("🌟 Ver respuesta modelo senior"):
+                                            st.write(fb.get("model_answer"))
+
+                                    col_next1, col_next2 = st.columns([2, 1])
+                                    with col_next1:
+                                        if st.button("➡️ Siguiente Pregunta", type="primary", use_container_width=True, key=f"btn_next_{cur_idx}"):
+                                            c_session["current_index"] += 1
+                                            c_session["current_feedback"] = None
+                                            st.rerun()
+                            else:
+                                # Todas las preguntas han sido completadas
+                                st.balloons()
+                                st.success("🎉 ¡Excelente trabajo! Has completado todas las preguntas de preparación para esta vacante.")
+                                st.markdown("### 📜 Resumen de tu Sesión de Práctica:")
+
+                                for h in c_session.get("history", []):
+                                    with st.expander(f"Pregunta {h['q_num']}: {h['question'][:70]}... — {h['feedback'].get('rating', '')}"):
+                                        st.markdown(f"**Tu respuesta:**\n\n_{h['answer']}_\n")
+                                        st.markdown(f"**Estructura sugerida:** {h['feedback'].get('suggested_framework', 'N/A')}")
+                                        st.markdown(f"**Respuesta modelo:**\n\n{h['feedback'].get('model_answer', 'N/A')}")
+
+                                if st.button("🔄 Reiniciar Práctica", key=f"btn_reset_coach_{app_actual['id']}", use_container_width=True):
+                                    c_session["current_index"] = 0
+                                    c_session["current_feedback"] = None
+                                    c_session["history"] = []
+                                    st.rerun()
 
 
 # ==============================================================================

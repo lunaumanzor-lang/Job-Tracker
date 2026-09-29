@@ -217,6 +217,46 @@ def insert_application(
         return cursor.lastrowid
 
 
+def insert_application_skills(application_id: int, skills: List[Dict[str, str]]) -> int:
+    """
+    Inserta las habilidades asociadas a una vacante con su estado de coincidencia ('strong', 'partial', 'missing').
+    
+    Parámetros:
+        application_id: ID de la aplicación en la tabla applications.
+        skills: Lista de diccionarios, ej. [{"skill": "Python", "match_status": "strong"}]
+        
+    Retorna:
+        Cantidad de habilidades insertadas.
+    """
+    query = """
+    INSERT INTO skills (application_id, skill, match_status)
+    VALUES (?, ?, ?);
+    """
+    insertados = 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for item in skills:
+            nombre = item.get("skill", "").strip()
+            status = item.get("match_status", "strong").strip()
+            if nombre:
+                cursor.execute(query, (application_id, nombre, status))
+                insertados += 1
+        conn.commit()
+    return insertados
+
+
+def get_skills_by_application(application_id: int) -> List[Dict[str, Any]]:
+    """
+    Recupera todas las habilidades vinculadas a una postulación específica,
+    indicando el estado de match ('strong', 'partial', 'missing').
+    """
+    query = "SELECT id, application_id, skill, match_status FROM skills WHERE application_id = ? ORDER BY id ASC;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (application_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 # ------------------------------------------------------------------------------
 # 3. OPERACIONES CRUD: READ (Consultar)
 # ------------------------------------------------------------------------------

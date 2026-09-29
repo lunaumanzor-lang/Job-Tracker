@@ -444,3 +444,295 @@ REGLAS DE RESPUESTA:
 
     return data
 
+
+# ==============================================================================
+# FASE 5.3: FUNCIONES DEL INTERVIEW COACH
+# ==============================================================================
+
+def generate_skill_gaps_study(
+    missing_skills: list,
+    position: str,
+    company: str,
+    api_key: Optional[str] = None
+) -> str:
+    """
+    Genera una guía de estudio exprés orientada a entrevistas técnicas sobre
+    las habilidades faltantes (missing_skills) detectadas para el puesto.
+    """
+    if not missing_skills:
+        return (
+            "🎉 **¡Felicidades!** No se detectaron brechas técnicas críticas en esta postulación. "
+            "Tu perfil cubre los requerimientos técnicos registrados. Te recomendamos enfocarte "
+            "directamente en el simulador de preguntas para pulir tus respuestas de arquitectura y liderazgo."
+        )
+
+    key = api_key or get_api_key()
+    if not key:
+        raise ValueError("No se encontró la clave de API de Gemini.")
+
+    genai.configure(api_key=key)
+
+    skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else str(missing_skills)
+
+    prompt = f"""
+Eres un Lead Architect y entrevistador técnico senior preparando a un candidato para una entrevista.
+El candidato postula al rol de '{position}' en '{company}'.
+En el análisis de la vacante se detectaron las siguientes habilidades o tecnologías que NO están en su perfil principal:
+{skills_str}
+
+Tu tarea es generar una GUÍA DE ESTUDIO RÁPIDA (Skill Gaps Study Guide) en formato Markdown.
+NO hagas un curso académico largo; genera un resumen práctico y estratégico para que el candidato pueda defenderse con solvencia y credibilidad en una entrevista técnica.
+
+Para cada una de las tecnologías faltantes incluye:
+1. ### 🛠️ [Nombre de la Tecnología]
+2. **¿Qué es y qué problema resuelve?** (Explicación concisa en 2 o 3 oraciones, usando analogías claras).
+3. **Casos de uso clave en este puesto:** Cómo se usa en el día a día para un rol de '{position}'.
+4. **Vocabulario y conceptos indispensables:** 3 o 4 términos o comandos clave que el entrevistador esperará escuchar.
+5. **Cómo defenderte en la entrevista:** Cómo responder con honestidad y confianza si te preguntan por ella (ejemplo: apoyándote en tecnologías análogas que ya dominas, explicando los fundamentos conceptuales y demostrando alta curva de aprendizaje).
+
+Sé directo, profesional, motivador y usa formato Markdown limpio.
+"""
+
+    modelos_a_probar = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-flash-latest"
+    ]
+
+    for m in modelos_a_probar:
+        try:
+            model = genai.GenerativeModel(m, generation_config={"temperature": 0.3})
+            resp = model.generate_content(prompt)
+            if resp and resp.text:
+                return resp.text.strip()
+        except Exception as e:
+            logger.warning(f"Error generando guía de estudio con {m}: {e}")
+            continue
+
+    raise RuntimeError("No se pudo generar la guía de estudio debido a límites temporales de la API. Intenta en unos segundos.")
+
+
+def generate_interview_questions(
+    position: str,
+    company: str,
+    app_skills: list,
+    user_skills: list,
+    notes: Optional[str] = None,
+    api_key: Optional[str] = None
+) -> list:
+    """
+    Genera de 5 a 8 preguntas de entrevista técnica y situacional personalizadas,
+    cruzando los requerimientos del puesto con el Master Skill Profile del usuario.
+    """
+    key = api_key or get_api_key()
+    if not key:
+        raise ValueError("No se encontró la clave de API de Gemini.")
+
+    genai.configure(api_key=key)
+
+    # Resumen de skills de la vacante
+    vacante_skills_str = ", ".join(s.get("skill", "") for s in app_skills) if app_skills else "Requerimientos generales del puesto"
+    
+    # Resumen de habilidades del candidato
+    candidato_skills_str = ", ".join(f"{s.get('skill_name')} ({s.get('proficiency')})" for s in user_skills[:25]) if user_skills else "Perfil general de TI"
+
+    prompt = f"""
+Eres un Hiring Manager y entrevistador técnico experto en perfiles tecnológicos.
+Vas a preparar una batería de 6 preguntas de entrevista para el candidato que postula a:
+- Puesto: {position}
+- Empresa: {company}
+- Habilidades solicitadas por la vacante: {vacante_skills_str}
+- Experiencia declarada del candidato: {candidato_skills_str}
+- Notas adicionales: {notes or 'N/A'}
+
+REGLAS DE DISTRIBUCIÓN DE LAS 6 PREGUNTAS:
+1. Dos (2) preguntas técnicas sobre las fortalezas del candidato (para validar dominio profundo en producción).
+2. Dos (2) preguntas sobre áreas o tecnologías donde el puesto pide requisitos pero el candidato tiene brechas o nivel inicial (para evaluar adaptabilidad y fundamentos).
+3. Dos (2) preguntas situacionales, de arquitectura o resolución de incidentes (Troubleshooting / Metodología STAR).
+
+REGLAS DE SALIDA:
+- Responde ÚNICAMENTE con un array JSON válido de objetos.
+- NO agregues texto conversacional ni explicaciones fuera del JSON.
+- Sigue exactamente esta estructura:
+
+[
+  {{
+    "id": 1,
+    "category": "Fortaleza Técnica | Brecha de Habilidad | Troubleshooting / Incidente | Situacional STAR",
+    "focus_skill": "Tecnología o concepto evaluado",
+    "question": "Texto detallado y realista de la pregunta...",
+    "tip": "Qué busca escuchar el entrevistador para calificarla con éxito"
+  }}
+]
+"""
+
+    modelos_a_probar = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-flash-latest"
+    ]
+
+    raw_text = None
+    for m in modelos_a_probar:
+        try:
+            model = genai.GenerativeModel(m, generation_config={"temperature": 0.4})
+            resp = model.generate_content(prompt)
+            if resp and resp.text:
+                raw_text = resp.text.strip()
+                break
+        except Exception as e:
+            logger.warning(f"Error generando preguntas con {m}: {e}")
+            continue
+
+    if not raw_text:
+        raise RuntimeError("No se pudieron generar las preguntas de entrevista. Intenta nuevamente.")
+
+    # Parseo defensivo del JSON
+    texto_limpio = raw_text
+    if texto_limpio.startswith("```"):
+        lineas = texto_limpio.splitlines()
+        if len(lineas) >= 2:
+            texto_limpio = "\n".join(lineas[1:-1])
+
+    inicio_json = texto_limpio.find("[")
+    fin_json = texto_limpio.rfind("]")
+    if inicio_json != -1 and fin_json != -1:
+        texto_limpio = texto_limpio[inicio_json : fin_json + 1]
+
+    try:
+        preguntas = json.loads(texto_limpio)
+        if isinstance(preguntas, list) and len(preguntas) > 0:
+            return preguntas
+    except Exception as err:
+        logger.error(f"Error decodificando JSON de preguntas: {err}\nTexto:\n{raw_text}")
+
+    # Fallback predeterminado si el JSON vino malformado
+    return [
+        {
+            "id": 1,
+            "category": "Fortaleza Técnica",
+            "focus_skill": "Linux / Troubleshooting",
+            "question": f"¿Cómo abordas un problema de rendimiento donde un servicio en {position} experimenta latencia y alto uso de CPU?",
+            "tip": "Menciona comandos clave de diagnóstico, aislamiento y validación."
+        },
+        {
+            "id": 2,
+            "category": "Situacional STAR",
+            "focus_skill": "Gestión de Incidentes",
+            "question": "Cuéntame sobre una ocasión en la que una implementación falló en producción. ¿Cómo lo resolviste y qué aprendiste?",
+            "tip": "Usa la metodología STAR: Situación, Tarea, Acción y Resultado."
+        }
+    ]
+
+
+def evaluate_interview_answer(
+    question: str,
+    category: str,
+    focus_skill: str,
+    user_answer: str,
+    api_key: Optional[str] = None
+) -> dict:
+    """
+    Evalúa la respuesta de un candidato a una pregunta de entrevista técnica.
+    Proporciona feedback formativo: fortalezas, aspectos a mejorar, estructura sugerida y respuesta modelo.
+    """
+    key = api_key or get_api_key()
+    if not key:
+        raise ValueError("No se encontró la clave de API de Gemini.")
+
+    genai.configure(api_key=key)
+
+    prompt = f"""
+Eres un entrevistador técnico y coach de carrera evaluando la respuesta de un candidato.
+
+PREGUNTA DE LA ENTREVISTA:
+\"{question}\"
+Categoría: {category} | Tema evaluado: {focus_skill}
+
+RESPUESTA DEL CANDIDATO:
+\"\"\"
+{user_answer}
+\"\"\"
+
+Tu tarea es evaluar la respuesta y devolver un objeto JSON con retroalimentación constructiva y aplicable.
+Si la pregunta es de Troubleshooting o incidentes, sugiere una estructura estructurada como:
+"Identify -> Investigate -> Remediate -> Validate -> Document" o STAR (Situación, Tarea, Acción, Resultado).
+
+REGLAS DE FORMATO:
+- Responde ÚNICAMENTE con un objeto JSON válido.
+- NO agregues texto fuera del JSON.
+- Sigue exactamente esta estructura:
+
+{{
+  "rating": "🌟 Excelente | 👍 Buena (con áreas de mejora) | ⚠️ Necesita más profundidad",
+  "strengths": [
+    "Punto fuerte 1 de la respuesta",
+    "Punto fuerte 2"
+  ],
+  "areas_to_improve": [
+    "Aspecto que faltó profundizar o precisar",
+    "Concepto técnico clave omitido"
+  ],
+  "suggested_framework": "Estructura recomendada para responder esta tipología de pregunta",
+  "model_answer": "Ejemplo conciso de cómo respondería un profesional senior de forma contundente (máximo 2 párrafos)"
+}}
+"""
+
+    modelos_a_probar = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-flash-latest"
+    ]
+
+    raw_text = None
+    for m in modelos_a_probar:
+        try:
+            model = genai.GenerativeModel(m, generation_config={"temperature": 0.2})
+            resp = model.generate_content(prompt)
+            if resp and resp.text:
+                raw_text = resp.text.strip()
+                break
+        except Exception as e:
+            logger.warning(f"Error evaluando respuesta con {m}: {e}")
+            continue
+
+    if not raw_text:
+        raise RuntimeError("No se pudo obtener la evaluación de la respuesta. Intenta de nuevo.")
+
+    # Parseo defensivo
+    texto_limpio = raw_text
+    if texto_limpio.startswith("```"):
+        lineas = texto_limpio.splitlines()
+        if len(lineas) >= 2:
+            texto_limpio = "\n".join(lineas[1:-1])
+
+    inicio_json = texto_limpio.find("{")
+    fin_json = texto_limpio.rfind("}")
+    if inicio_json != -1 and fin_json != -1:
+        texto_limpio = texto_limpio[inicio_json : fin_json + 1]
+
+    try:
+        data = json.loads(texto_limpio)
+        if isinstance(data, dict):
+            return data
+    except Exception as err:
+        logger.error(f"Error decodificando evaluación: {err}\nTexto:\n{raw_text}")
+
+    return {
+        "rating": "👍 Buena",
+        "strengths": ["Respuesta directa y clara."],
+        "areas_to_improve": ["Puedes agregar ejemplos con métricas o resultados concretos."],
+        "suggested_framework": "STAR (Situación, Tarea, Acción, Resultado)",
+        "model_answer": "Enfócate en explicar primero el contexto, las acciones precisas tomadas y el impacto medible en el negocio o infraestructura."
+    }
+
+
