@@ -15,7 +15,8 @@ from database import (
     get_all_applications,
     get_application_by_id,
     update_application,
-    delete_application
+    delete_application,
+    get_dashboard_counts
 )
 
 # ------------------------------------------------------------------------------
@@ -32,7 +33,7 @@ create_tables()
 
 # Título y encabezado
 st.title("💼 AI Job Application Tracker")
-st.caption("Fase 3: Gestión Completa de Aplicaciones (Crear, Ver, Editar, Eliminar y Filtrar)")
+st.caption("Fase 4a: Dashboard de Métricas y Gestión de Postulaciones")
 
 # Valores exactos de Status requeridos por el proyecto
 STATUS_OPTIONS = [
@@ -51,10 +52,80 @@ WORK_MODE_OPTIONS = ["Remote", "Hybrid", "On-site", "TBD"]
 
 # ------------------------------------------------------------------------------
 # CONCEPTO STREAMLIT - st.tabs():
-# Permite dividir la aplicación en pestañas visuales limpias.
-# Esto mantiene la interfaz ordenada para que una pantalla no esté saturada.
+# Creamos tres pestañas principales: Dashboard, Ver/Gestionar y Agregar.
 # ------------------------------------------------------------------------------
-tab_ver, tab_agregar = st.tabs(["📋 Ver y Gestionar Aplicaciones", "➕ Agregar Nueva Aplicación"])
+tab_dash, tab_ver, tab_agregar = st.tabs([
+    "📊 Dashboard",
+    "📋 Ver y Gestionar Aplicaciones",
+    "➕ Agregar Nueva Aplicación"
+])
+
+
+# ==============================================================================
+# PESTAÑA 0: DASHBOARD (Sub-fase 4a: Conteos Simples en Tiempo Real)
+# ==============================================================================
+with tab_dash:
+    st.subheader("📈 Resumen General de Postulaciones")
+    st.caption("Métricas clave calculadas en tiempo real directamente desde SQLite mediante consultas SQL COUNT().")
+
+    # Obtenemos los conteos calculados por SQL
+    metricas = get_dashboard_counts()
+
+    # --------------------------------------------------------------------------
+    # CONCEPTO STREAMLIT - st.metric():
+    # st.metric() crea una tarjeta destacada con un valor numérico grande,
+    # un título pequeño ('label') y opcionalmente un texto de ayuda o delta.
+    # Usamos st.columns(5) para distribuirlas horizontalmente en una sola fila.
+    # --------------------------------------------------------------------------
+    col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+
+    with col_m1:
+        st.metric(
+            label="Total Applications",
+            value=metricas["total_applications"]
+        )
+
+    with col_m2:
+        st.metric(
+            label="Interviews 🎯",
+            value=metricas["interviews"],
+            help="Regla de negocio: incluye Recruiter Screen, Technical Interview y Final Interview"
+        )
+
+    with col_m3:
+        st.metric(
+            label="Offers 🎉",
+            value=metricas["offers"]
+        )
+
+    with col_m4:
+        st.metric(
+            label="Rejections ❌",
+            value=metricas["rejections"]
+        )
+
+    with col_m5:
+        st.metric(
+            label="Follow-ups ⏰",
+            value=metricas["follow_ups"],
+            help="Aplicaciones con fecha de seguimiento registrada próxima o vencida"
+        )
+
+    st.divider()
+
+    # Explicación pedagógica de las consultas de agregación utilizadas
+    with st.expander("ℹ️ ¿Cómo se calculan estas métricas en SQL? (Explicación técnica)"):
+        st.markdown("""
+        * **Total Applications:** `SELECT COUNT(*) FROM applications;`  
+          Cuenta el número total de filas en la tabla.
+        * **Interviews:** `SELECT COUNT(*) FROM applications WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview');`  
+          La cláusula `IN (...)` agrupa los 3 estados de entrevista en una sola condición.
+        * **Offers:** `SELECT COUNT(*) FROM applications WHERE status = 'Offer';`
+        * **Rejections:** `SELECT COUNT(*) FROM applications WHERE status = 'Rejected';`
+        * **Follow-ups:** `SELECT COUNT(*) FROM applications WHERE follow_up_date IS NOT NULL AND date(follow_up_date) <= date('now');`  
+          Compara la fecha de seguimiento contra la fecha actual (`date('now')` en SQLite).
+        """)
+
 
 
 # ==============================================================================

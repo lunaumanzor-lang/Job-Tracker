@@ -259,8 +259,58 @@ def delete_application(app_id: int) -> bool:
 
 
 # ------------------------------------------------------------------------------
-# TEST RÁPIDO DEL MÓDULO (Para ejecutar con F5 o en terminal)
+# 6. CONSULTAS DE AGREGACIÓN PARA EL DASHBOARD (Sub-fase 4a)
 # ------------------------------------------------------------------------------
+def get_dashboard_counts() -> Dict[str, int]:
+    """
+    Ejecuta consultas de agregación SQL (COUNT) para calcular las 5 métricas clave:
+    1. Total applications: conteo absoluto de postulaciones.
+    2. Interviews: según la regla de negocio (Recruiter Screen, Technical Interview, Final Interview).
+    3. Offers: ofertas recibidas.
+    4. Rejections: postulaciones rechazadas.
+    5. Follow-ups: postulaciones con fecha de seguimiento asignada que esté próxima o vencida.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # 1. Total Applications (COUNT(*) cuenta todas las filas)
+        cursor.execute("SELECT COUNT(*) FROM applications;")
+        total_apps = cursor.fetchone()[0]
+
+        # 2. Interviews (Cláusula IN para múltiples valores)
+        cursor.execute("""
+            SELECT COUNT(*) FROM applications
+            WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview');
+        """)
+        interviews = cursor.fetchone()[0]
+
+        # 3. Offers
+        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Offer';")
+        offers = cursor.fetchone()[0]
+
+        # 4. Rejections
+        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Rejected';")
+        rejections = cursor.fetchone()[0]
+
+        # 5. Follow-ups: con fecha de seguimiento definida y vencida o para hoy
+        cursor.execute("""
+            SELECT COUNT(*) FROM applications
+            WHERE follow_up_date IS NOT NULL
+              AND follow_up_date != ''
+              AND date(follow_up_date) <= date('now');
+        """)
+        follow_ups = cursor.fetchone()[0]
+
+        return {
+            "total_applications": total_apps,
+            "interviews": interviews,
+            "offers": offers,
+            "rejections": rejections,
+            "follow_ups": follow_ups
+        }
+
+
+
 if __name__ == "__main__":
     print("Inicializando base de datos y creando tablas...")
     create_tables()
