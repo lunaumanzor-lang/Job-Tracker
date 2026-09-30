@@ -444,8 +444,9 @@ elif menu_opcion == "👤 My Profile":
         with col_sk1:
             input_skill = st.text_input("Nombre de la Tecnología / Skill *", placeholder="Ej. Terraform, Kubernetes, GraphQL...", key="input_skill_manual")
         with col_sk2:
-            opciones_cat_form = categorias_disponibles + ["➕ Nueva Categoría..."]
-            input_cat = st.selectbox("Categoría *", options=opciones_cat_form, key="input_cat_manual")
+            opciones_cat_form = ["➕ Nueva Categoría..."] + categorias_disponibles
+            idx_cat_def = 1 if len(opciones_cat_form) > 1 else 0
+            input_cat = st.selectbox("Categoría *", options=opciones_cat_form, index=idx_cat_def, key="input_cat_manual")
             nueva_cat_personalizada = None
             if input_cat == "➕ Nueva Categoría...":
                 nueva_cat_personalizada = st.text_input("Nombre de la nueva categoría *", placeholder="Ej. AI & Machine Learning...", key="input_new_custom_cat")
@@ -502,8 +503,8 @@ elif menu_opcion == "👤 My Profile":
                     with c_cat:
                         # Dropdown para cambiar o reasignar la categoría
                         cat_actual = item.get("category", "DevOps")
-                        opciones_fila = categorias_disponibles + ["➕ Nueva Categoría..."]
-                        idx_cat = opciones_fila.index(cat_actual) if cat_actual in opciones_fila else 0
+                        opciones_fila = ["➕ Nueva Categoría..."] + categorias_disponibles
+                        idx_cat = opciones_fila.index(cat_actual) if cat_actual in opciones_fila else 1
                         nueva_cat = st.selectbox(
                             "Categoría",
                             options=opciones_fila,
