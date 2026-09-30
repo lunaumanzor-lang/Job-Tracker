@@ -126,42 +126,84 @@ def login_screen():
                     st.error(f"Error al registrar: {e}")
 
     with tab3:
-        st.markdown("### 🔑 Recuperar y Restablecer Contraseña")
-        st.caption("Sigue estos dos sencillos pasos para cambiar tu contraseña con Supabase:")
+        st.markdown("### 🔑 Recuperar Contraseña con Código de Seguridad")
+        st.caption("Recupera el acceso a tu cuenta fácilmente mediante un código de 6 dígitos enviado a tu correo.")
         st.markdown("---")
 
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            st.markdown("#### 1️⃣ Enviar enlace a mi correo")
-            st.caption("Te enviaremos un correo oficial con el enlace de recuperación.")
-            with st.form("tab_reset_password_form"):
-                reset_email_tab = st.text_input("Correo electrónico registrado", key="tab_reset_email")
-                submit_reset_tab = st.form_submit_button("Enviar correo de recuperación", use_container_width=True)
+            st.markdown("#### 1️⃣ Solicitar código de seguridad")
+            st.caption("Ingresa tu correo registrado y te enviaremos un código de seguridad:")
+            with st.form("tab_request_code_form"):
+                req_email = st.text_input(
+                    "Correo electrónico", 
+                    value=st.session_state.get("recovery_email", ""), 
+                    key="tab_req_email"
+                )
+                btn_send_code = st.form_submit_button("Enviar código al correo", use_container_width=True)
 
-                if submit_reset_tab:
-                    if not reset_email_tab.strip():
+                if btn_send_code:
+                    if not req_email.strip():
                         st.warning("Por favor ingresa tu correo electrónico.")
                     else:
                         try:
                             supabase.auth.reset_password_for_email(
-                                reset_email_tab.strip(),
+                                req_email.strip(),
                                 options={"redirect_to": "http://localhost:8501"}
                             )
+                            st.session_state.recovery_email = req_email.strip()
                             st.success(
-                                f"📧 ¡Correo enviado! Revisa tu bandeja de entrada en **{reset_email_tab.strip()}**."
+                                f"📧 ¡Código enviado a **{req_email.strip()}**! "
+                                "Revisa tu correo e ingresa el código de 6 dígitos en el paso 2."
                             )
                         except Exception as e:
                             if "rate limit" in str(e).lower():
                                 st.warning("⏳ Has solicitado varios correos recientemente. Por seguridad de Supabase, por favor espera unos minutos.")
                             else:
-                                st.error(f"Error al solicitar recuperación: {e}")
+                                st.error(f"Error al enviar código: {e}")
 
         with col_t2:
-            st.markdown("#### 2️⃣ Establecer nueva contraseña")
-            st.caption("Si ya recibiste el correo, pega aquí el enlace o abre el formulario directamente:")
-            pasted_url = st.text_input("Pega aquí el enlace de tu correo:", key="input_pasted_reset_link")
+            st.markdown("#### 2️⃣ Ingresar código y nueva contraseña")
+            st.caption("Escribe el código recibido y define tu nueva contraseña:")
+            with st.form("tab_verify_code_form"):
+                verify_email = st.text_input(
+                    "Confirmar correo", 
+                    value=st.session_state.get("recovery_email", ""), 
+                    key="tab_verify_email"
+                )
+                otp_code = st.text_input("Código de seguridad (6 dígitos)", placeholder="Ej: 123456", max_chars=10, key="tab_otp_code")
+                new_pass = st.text_input("Nueva contraseña (mínimo 6 caracteres)", type="password", key="tab_new_pass")
+                confirm_pass = st.text_input("Confirmar nueva contraseña", type="password", key="tab_confirm_pass")
+                btn_reset_with_code = st.form_submit_button("Actualizar Contraseña", use_container_width=True)
 
-            if st.button("🔑 Validar enlace del correo", key="btn_verify_pasted_link", use_container_width=True):
+                if btn_reset_with_code:
+                    if not verify_email.strip() or not otp_code.strip():
+                        st.warning("Por favor ingresa tu correo y el código recibido.")
+                    elif len(new_pass) < 6:
+                        st.error("La contraseña debe tener al menos 6 caracteres.")
+                    elif new_pass != confirm_pass:
+                        st.error("Las contraseñas no coinciden.")
+                    else:
+                        try:
+                            # 1. Verificar OTP
+                            res_otp = supabase.auth.verify_otp({
+                                "email": verify_email.strip(),
+                                "token": otp_code.strip(),
+                                "type": "recovery"
+                            })
+                            # 2. Actualizar contraseña del usuario autenticado
+                            supabase.auth.update_user({"password": new_pass})
+                            st.session_state.user = res_otp.user
+                            st.session_state.is_resetting_password = False
+                            st.success("🎉 ¡Tu contraseña ha sido actualizada con éxito! Ingresando a la plataforma...")
+                            st.rerun()
+                        except Exception as err_otp:
+                            st.error(f"Error al verificar código: {err_otp}")
+
+        st.divider()
+        with st.expander("🔗 ¿Prefieres validar pegando el enlace completo del correo?"):
+            pasted_url = st.text_input("Pega la dirección URL recibida:", key="input_pasted_reset_link")
+            if st.button("Validar enlace y abrir formulario", key="btn_verify_pasted_link", use_container_width=True):
                 if pasted_url.strip():
                     try:
                         parsed = urlparse.urlparse(pasted_url.strip())
@@ -182,11 +224,6 @@ def login_screen():
                         st.error(f"Error al procesar el enlace: {e_paste}")
                 else:
                     st.warning("Por favor pega la dirección URL que llegó a tu correo.")
-
-            st.write("")
-            if st.button("👉 Abrir pantalla de nueva clave", key="btn_direct_new_pass", use_container_width=True):
-                st.session_state.is_resetting_password = True
-                st.rerun()
 
 # Detección y conversión en el navegador:
 # 1. Mediante st.html (ejecución directa en la ventana principal, sin restricciones de sandbox iframe)
