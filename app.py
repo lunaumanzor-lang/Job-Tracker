@@ -24,6 +24,7 @@ from database import (
     get_monthly_interviews,
     # Fase 5.1: My Profile & Skills
     SKILL_CATEGORIES,
+    get_all_distinct_categories,
     PROFICIENCY_LEVELS,
     save_user_profile,
     get_user_profile,
@@ -435,30 +436,38 @@ elif menu_opcion == "👤 My Profile":
     with col_ms3:
         st.metric("Agregadas Manualmente ✏️", manual_s)
 
+    categorias_disponibles = get_all_distinct_categories()
+
     # Formulario para agregar una skill manualmente
     with st.expander("➕ Agregar una nueva tecnología / habilidad manualmente"):
-        with st.form("form_nueva_skill", clear_on_submit=True):
-            col_sk1, col_sk2, col_sk3 = st.columns([2, 1, 1])
-            with col_sk1:
-                input_skill = st.text_input("Nombre de la Tecnología / Skill *", placeholder="Ej. Terraform, Kubernetes, GraphQL...")
-            with col_sk2:
-                input_cat = st.selectbox("Categoría *", options=SKILL_CATEGORIES)
-            with col_sk3:
-                input_prof = st.selectbox("Nivel de Dominio", options=PROFICIENCY_LEVELS, index=1)
-            
-            btn_guardar_skill = st.form_submit_button("💾 Guardar Skill Manual", use_container_width=True)
+        col_sk1, col_sk2, col_sk3 = st.columns([2, 1.4, 1])
+        with col_sk1:
+            input_skill = st.text_input("Nombre de la Tecnología / Skill *", placeholder="Ej. Terraform, Kubernetes, GraphQL...", key="input_skill_manual")
+        with col_sk2:
+            opciones_cat_form = categorias_disponibles + ["➕ Nueva Categoría..."]
+            input_cat = st.selectbox("Categoría *", options=opciones_cat_form, key="input_cat_manual")
+            nueva_cat_personalizada = None
+            if input_cat == "➕ Nueva Categoría...":
+                nueva_cat_personalizada = st.text_input("Nombre de la nueva categoría *", placeholder="Ej. AI & Machine Learning...", key="input_new_custom_cat")
+        with col_sk3:
+            input_prof = st.selectbox("Nivel de Dominio", options=PROFICIENCY_LEVELS, index=1, key="input_prof_manual")
+        
+        btn_guardar_skill = st.button("💾 Guardar Skill Manual", type="primary", use_container_width=True)
 
         if btn_guardar_skill:
+            cat_final = nueva_cat_personalizada.strip() if (input_cat == "➕ Nueva Categoría..." and nueva_cat_personalizada) else input_cat
             if not input_skill.strip():
                 st.error("El nombre de la habilidad no puede estar vacío.")
+            elif input_cat == "➕ Nueva Categoría..." and not (nueva_cat_personalizada and nueva_cat_personalizada.strip()):
+                st.error("Por favor escribe el nombre de la nueva categoría.")
             else:
                 add_user_skill(
                     skill_name=input_skill.strip(),
-                    category=input_cat,
+                    category=cat_final,
                     source="Manual",
                     proficiency=input_prof
                 )
-                st.success(f"✅ ¡Habilidad '{input_skill.strip()}' guardada con éxito!")
+                st.success(f"✅ ¡Habilidad '{input_skill.strip()}' guardada con éxito en '{cat_final}'!")
                 st.rerun()
 
     # Despliegue de skills existentes
@@ -493,15 +502,32 @@ elif menu_opcion == "👤 My Profile":
                     with c_cat:
                         # Dropdown para cambiar o reasignar la categoría
                         cat_actual = item.get("category", "DevOps")
-                        idx_cat = SKILL_CATEGORIES.index(cat_actual) if cat_actual in SKILL_CATEGORIES else 0
+                        opciones_fila = categorias_disponibles + ["➕ Nueva Categoría..."]
+                        idx_cat = opciones_fila.index(cat_actual) if cat_actual in opciones_fila else 0
                         nueva_cat = st.selectbox(
                             "Categoría",
-                            options=SKILL_CATEGORIES,
+                            options=opciones_fila,
                             index=idx_cat,
                             key=f"cat_{item['id']}",
                             label_visibility="collapsed"
                         )
-                        if nueva_cat != cat_actual:
+                        if nueva_cat == "➕ Nueva Categoría...":
+                            col_nc1, col_nc2 = st.columns([3, 1])
+                            with col_nc1:
+                                txt_cat_fila = st.text_input(
+                                    "Nueva cat",
+                                    placeholder="Nombre categoría...",
+                                    key=f"txt_nc_{item['id']}",
+                                    label_visibility="collapsed"
+                                )
+                            with col_nc2:
+                                if st.button("💾", key=f"btn_save_nc_{item['id']}", help="Guardar nueva categoría"):
+                                    if txt_cat_fila.strip():
+                                        update_user_skill_category(item["id"], txt_cat_fila.strip())
+                                        st.rerun()
+                                    else:
+                                        st.warning("Escribe un nombre.")
+                        elif nueva_cat != cat_actual:
                             update_user_skill_category(item["id"], nueva_cat)
                             st.rerun()
                     

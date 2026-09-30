@@ -176,6 +176,25 @@ PROFICIENCY_LEVELS = [
 ]
 
 
+def get_all_distinct_categories() -> List[str]:
+    """
+    Retorna la lista unificada y ordenada de categorías:
+    las predeterminadas en SKILL_CATEGORIES más cualquier categoría personalizada
+    creada o registrada en la base de datos SQLite.
+    """
+    categorias = set(SKILL_CATEGORIES)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT category FROM user_skills WHERE category IS NOT NULL AND category != '';")
+            for row in cursor.fetchall():
+                if row[0]:
+                    categorias.add(row[0].strip())
+    except Exception:
+        pass
+    return sorted(list(categorias))
+
+
 # ------------------------------------------------------------------------------
 # 2. OPERACIONES CRUD: CREATE (Insertar)
 # ------------------------------------------------------------------------------
