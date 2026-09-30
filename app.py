@@ -7,6 +7,7 @@ import os
 from datetime import datetime, date
 import streamlit as st
 import pandas as pd
+from supabase import create_client, Client
 
 # Importamos las funciones de la base de datos de la Fase 2, 4, 5.1 y 7
 from database import (
@@ -59,7 +60,73 @@ st.set_page_config(
     layout="wide"  # 'wide' aprovecha mejor el ancho de la pantalla para tablas y formularios
 )
 
-# Aseguramos la existencia de las tablas
+# ------------------------------------------------------------------------------
+# SUPABASE AUTHENTICATION & ACCESS CONTROL (Gated Content)
+# ------------------------------------------------------------------------------
+# 1. Conectar a Supabase usando los secretos guardados en .streamlit/secrets.toml
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
+
+# 2. Inicializar el usuario en el estado de la sesión
+if 'user' not in st.session_state:
+    st.session_state.user = None
+
+# 3. Crear la pantalla de Login y Registro
+def login_screen():
+    st.title("💼 AI Job Application Tracker")
+    st.subheader("Acceso a la plataforma")
+
+    tab1, tab2 = st.tabs(["Iniciar Sesión", "Crear Cuenta"])
+
+    with tab1:
+        with st.form("login_form"):
+            email = st.text_input("Correo electrónico")
+            password = st.text_input("Contraseña", type="password")
+            submit = st.form_submit_button("Entrar", use_container_width=True)
+
+            if submit:
+                try:
+                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    st.session_state.user = res.user
+                    st.rerun()  # Refresca la pantalla para acceder a la aplicación
+                except Exception as e:
+                    st.error(f"Credenciales incorrectas: {e}")
+
+    with tab2:
+        with st.form("signup_form"):
+            new_email = st.text_input("Correo electrónico")
+            new_password = st.text_input("Contraseña", type="password")
+            signup_submit = st.form_submit_button("Registrarse", use_container_width=True)
+
+            if signup_submit:
+                try:
+                    res = supabase.auth.sign_up({"email": new_email, "password": new_password})
+                    st.success("¡Cuenta creada exitosamente! Ya puedes iniciar sesión en la pestaña 'Iniciar Sesión'.")
+                except Exception as e:
+                    st.error(f"Error al registrar: {e}")
+
+# 4. Lógica de control de acceso: si no hay usuario, mostrar SOLO la pantalla de login
+if st.session_state.user is None:
+    login_screen()
+    st.stop()  # Detiene la renderización del resto de la app (sidebar, dashboard, formularios)
+
+# 5. Barra superior con el usuario activo y botón de Cerrar Sesión
+col_usr1, col_usr2 = st.columns([0.8, 0.2])
+with col_usr1:
+    st.markdown(f"👤 **Usuario activo:** `{st.session_state.user.email}`")
+with col_usr2:
+    if st.button("Cerrar Sesión", use_container_width=True):
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
+        st.session_state.user = None
+        st.rerun()
+
+st.divider()
+
+# Aseguramos la existencia de las tablas locales
 create_tables()
 
 # Título y encabezado principal
