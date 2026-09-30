@@ -77,7 +77,7 @@ def login_screen():
     st.title("💼 AI Job Application Tracker")
     st.subheader("Acceso a la plataforma")
 
-    tab1, tab2 = st.tabs(["Iniciar Sesión", "Crear Cuenta"])
+    tab1, tab2, tab3 = st.tabs(["Iniciar Sesión", "Crear Cuenta", "🔑 Recuperar Contraseña"])
 
     with tab1:
         with st.form("login_form"):
@@ -93,6 +93,20 @@ def login_screen():
                 except Exception as e:
                     st.error(f"Credenciales incorrectas: {e}")
 
+        # Opción rápida de recuperación dentro de la pestaña de Iniciar Sesión
+        with st.expander("¿Olvidaste tu contraseña?"):
+            st.caption("Ingresa tu correo para recibir un enlace oficial de recuperación:")
+            email_rec = st.text_input("Correo registrado", key="login_rec_email")
+            if st.button("Enviar enlace de restablecimiento", key="btn_login_rec", use_container_width=True):
+                if not email_rec.strip():
+                    st.warning("Por favor ingresa tu correo electrónico.")
+                else:
+                    try:
+                        supabase.auth.reset_password_for_email(email_rec.strip())
+                        st.success(f"📧 Se ha enviado un correo a **{email_rec.strip()}** con instrucciones para restablecer tu contraseña.")
+                    except Exception as err:
+                        st.error(f"Error al enviar recuperación: {err}")
+
     with tab2:
         with st.form("signup_form"):
             new_email = st.text_input("Correo electrónico")
@@ -105,6 +119,29 @@ def login_screen():
                     st.success("¡Cuenta creada exitosamente! Ya puedes iniciar sesión en la pestaña 'Iniciar Sesión'.")
                 except Exception as e:
                     st.error(f"Error al registrar: {e}")
+
+    with tab3:
+        with st.form("tab_reset_password_form"):
+            st.markdown("##### 🔑 Restablecer Contraseña con Supabase")
+            st.caption(
+                "Ingresa el correo electrónico asociado a tu cuenta. "
+                "Supabase enviará un correo seguro con el enlace para definir una nueva contraseña."
+            )
+            reset_email_tab = st.text_input("Correo electrónico registrado", key="tab_reset_email")
+            submit_reset_tab = st.form_submit_button("Enviar enlace de recuperación", use_container_width=True)
+
+            if submit_reset_tab:
+                if not reset_email_tab.strip():
+                    st.warning("Por favor ingresa tu correo electrónico.")
+                else:
+                    try:
+                        supabase.auth.reset_password_for_email(reset_email_tab.strip())
+                        st.success(
+                            f"📧 ¡Enlace enviado! Revisa tu bandeja de entrada en **{reset_email_tab.strip()}** "
+                            "para crear tu nueva contraseña."
+                        )
+                    except Exception as e:
+                        st.error(f"Error al solicitar recuperación: {e}")
 
 # 4. Lógica de control de acceso: si no hay usuario, mostrar SOLO la pantalla de login
 if st.session_state.user is None:
