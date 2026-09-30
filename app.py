@@ -102,7 +102,10 @@ def login_screen():
                     st.warning("Por favor ingresa tu correo electrónico.")
                 else:
                     try:
-                        supabase.auth.reset_password_for_email(email_rec.strip())
+                        supabase.auth.reset_password_for_email(
+                            email_rec.strip(),
+                            options={"redirect_to": "http://localhost:8501"}
+                        )
                         st.success(f"📧 Se ha enviado un correo a **{email_rec.strip()}** con instrucciones para restablecer tu contraseña.")
                     except Exception as err:
                         st.error(f"Error al enviar recuperación: {err}")
@@ -135,13 +138,57 @@ def login_screen():
                     st.warning("Por favor ingresa tu correo electrónico.")
                 else:
                     try:
-                        supabase.auth.reset_password_for_email(reset_email_tab.strip())
+                        supabase.auth.reset_password_for_email(
+                            reset_email_tab.strip(),
+                            options={"redirect_to": "http://localhost:8501"}
+                        )
                         st.success(
                             f"📧 ¡Enlace enviado! Revisa tu bandeja de entrada en **{reset_email_tab.strip()}** "
                             "para crear tu nueva contraseña."
                         )
                     except Exception as e:
                         st.error(f"Error al solicitar recuperación: {e}")
+
+# Captura de código de recuperación desde la URL de retorno (PKCE / Supabase Auth flow)
+if "code" in st.query_params:
+    try:
+        res_code = supabase.auth.exchange_code_for_session({"auth_code": st.query_params["code"]})
+        st.session_state.user = res_code.user
+        st.session_state.is_resetting_password = True
+        st.query_params.clear()
+        st.rerun()
+    except Exception as err_code:
+        st.warning(f"El enlace de recuperación ya fue utilizado o expiró: {err_code}")
+
+# Pantalla de creación de nueva contraseña tras el enlace de recuperación
+def set_new_password_screen():
+    st.title("💼 AI Job Application Tracker")
+    st.subheader("🔑 Establecer nueva contraseña")
+    st.caption("Ingresa tu nueva contraseña para actualizar tu acceso en Supabase.")
+
+    with st.form("form_set_new_password"):
+        new_pass = st.text_input("Nueva contraseña", type="password")
+        confirm_pass = st.text_input("Confirmar nueva contraseña", type="password")
+        submit_btn = st.form_submit_button("Guardar nueva contraseña", use_container_width=True)
+
+        if submit_btn:
+            if len(new_pass) < 6:
+                st.error("La contraseña debe tener al menos 6 caracteres.")
+            elif new_pass != confirm_pass:
+                st.error("Las contraseñas no coinciden.")
+            else:
+                try:
+                    supabase.auth.update_user({"password": new_pass})
+                    st.success("🎉 ¡Tu contraseña ha sido actualizada con éxito! Ya puedes usar la plataforma.")
+                    st.session_state.is_resetting_password = False
+                    st.rerun()
+                except Exception as err:
+                    st.error(f"Error al actualizar la contraseña: {err}")
+
+# Si el usuario viene del enlace de reseteo, mostramos el formulario de cambio de clave
+if st.session_state.get("is_resetting_password"):
+    set_new_password_screen()
+    st.stop()
 
 # 4. Lógica de control de acceso: si no hay usuario, mostrar SOLO la pantalla de login
 if st.session_state.user is None:
