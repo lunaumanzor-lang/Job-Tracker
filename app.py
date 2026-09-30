@@ -304,22 +304,6 @@ elif menu_opcion == "📈 Statistics":
     else:
         st.info("No hay suficientes datos con fecha para graficar la evolución mensual.")
 
-    st.divider()
-
-    # 5. Pendiente Decidido: Empresas por Industria
-    st.subheader("🏭 Empresas por Industria")
-    st.info("💡 **Decisión de Arquitectura tomada:** La métrica de 'Empresas por Industria' será clasificada automáticamente en la **Fase 5 con Inteligencia Artificial (LLM)**, extrayendo el sector de cada empresa a partir de su nombre y descripción del puesto, evitando trabajo manual de etiquetado.")
-
-    # 6. Explicación Técnica y Pedagógica
-    with st.expander("ℹ️ ¿Cómo se procesaron estas estadísticas? (Conceptos Técnicos)"):
-        st.markdown("""
-        * **Reutilización de consultas:** Las 4 métricas base (`Applications`, `Interviews`, `Offers`, `Rejected`) reutilizan la función `get_dashboard_counts()` creada en la Fase 4, garantizando que no haya código SQL duplicado.
-        * **Interview Rate (%):** Cálculo matemático simple en Python: `(interviews / total_apps) * 100`.
-        * **Modalidades de trabajo:** `SELECT work_mode, COUNT(*) FROM applications GROUP BY work_mode;`
-        * **Limpieza de Salarios:** Python lee los textos de salarios, filtra con expresiones regulares (`re.findall`) los valores numéricos reales en USD (promediando rangos como '4500-5000 USD') y calcula `min()`, `max()` y promedio (`sum() / len()`), ignorando campos nulos o monedas no homologadas como CRC.
-        * **Agrupación por Mes:** SQL extrae el año y mes usando `substr(application_date, 1, 7)` y agrupa con `GROUP BY mes ORDER BY mes ASC`. Luego Pandas combina las series de postulaciones y entrevistas con `pd.merge()`.
-        """)
-
 
 # ==============================================================================
 # PÁGINA 2: MY PROFILE (Fase 5.1: Master Skill Profile)
