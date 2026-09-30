@@ -126,84 +126,104 @@ def login_screen():
                     st.error(f"Error al registrar: {e}")
 
     with tab3:
-        with st.form("tab_reset_password_form"):
-            st.markdown("##### 🔑 Restablecer Contraseña con Supabase")
-            st.caption(
-                "Ingresa el correo electrónico asociado a tu cuenta. "
-                "Supabase enviará un correo seguro con el enlace para definir una nueva contraseña."
-            )
-            reset_email_tab = st.text_input("Correo electrónico registrado", key="tab_reset_email")
-            submit_reset_tab = st.form_submit_button("Enviar enlace de recuperación", use_container_width=True)
+        st.markdown("### 🔑 Recuperar y Restablecer Contraseña")
+        st.caption("Sigue estos dos sencillos pasos para cambiar tu contraseña con Supabase:")
+        st.markdown("---")
 
-            if submit_reset_tab:
-                if not reset_email_tab.strip():
-                    st.warning("Por favor ingresa tu correo electrónico.")
-                else:
-                    try:
-                        supabase.auth.reset_password_for_email(
-                            reset_email_tab.strip(),
-                            options={"redirect_to": "http://localhost:8501"}
-                        )
-                        st.success(
-                            f"📧 ¡Enlace enviado! Revisa tu bandeja de entrada en **{reset_email_tab.strip()}** "
-                            "para crear tu nueva contraseña."
-                        )
-                    except Exception as e:
-                        if "rate limit" in str(e).lower():
-                            st.warning("⏳ Has solicitado varios correos recientemente. Por seguridad de Supabase, por favor espera unos minutos.")
-                        else:
-                            st.error(f"Error al solicitar recuperación: {e}")
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            st.markdown("#### 1️⃣ Enviar enlace a mi correo")
+            st.caption("Te enviaremos un correo oficial con el enlace de recuperación.")
+            with st.form("tab_reset_password_form"):
+                reset_email_tab = st.text_input("Correo electrónico registrado", key="tab_reset_email")
+                submit_reset_tab = st.form_submit_button("Enviar correo de recuperación", use_container_width=True)
 
-        st.divider()
-        with st.expander("🔗 ¿Ya recibiste el enlace en tu correo pero no abrió el formulario?"):
-            st.caption("Puedes pegar aquí la URL completa del enlace que te llegó por correo o abrir directamente el formulario:")
-            pasted_url = st.text_input("Pega la dirección URL recibida:", key="input_pasted_reset_link")
-            col_paste_btn1, col_paste_btn2 = st.columns([0.6, 0.4])
-            with col_paste_btn1:
-                if st.button("Procesar enlace de correo", key="btn_verify_pasted_link", use_container_width=True):
-                    if pasted_url.strip():
-                        try:
-                            parsed = urlparse.urlparse(pasted_url.strip())
-                            params = urlparse.parse_qs(parsed.fragment) or urlparse.parse_qs(parsed.query)
-                            if "access_token" in params and "refresh_token" in params:
-                                res_sess = supabase.auth.set_session(params["access_token"][0], params["refresh_token"][0])
-                                st.session_state.user = res_sess.user
-                                st.session_state.is_resetting_password = True
-                                st.rerun()
-                            elif "code" in params:
-                                res_c = supabase.auth.exchange_code_for_session({"auth_code": params["code"][0]})
-                                st.session_state.user = res_c.user
-                                st.session_state.is_resetting_password = True
-                                st.rerun()
-                            else:
-                                st.warning("El enlace pegado no contiene parámetros de autenticación válidos.")
-                        except Exception as e_paste:
-                            st.error(f"Error al procesar el enlace: {e_paste}")
+                if submit_reset_tab:
+                    if not reset_email_tab.strip():
+                        st.warning("Por favor ingresa tu correo electrónico.")
                     else:
-                        st.warning("Por favor pega la URL recibida.")
-            with col_paste_btn2:
-                if st.button("Abrir pantalla de nueva contraseña", key="btn_direct_new_pass", use_container_width=True):
-                    st.session_state.is_resetting_password = True
-                    st.rerun()
+                        try:
+                            supabase.auth.reset_password_for_email(
+                                reset_email_tab.strip(),
+                                options={"redirect_to": "http://localhost:8501"}
+                            )
+                            st.success(
+                                f"📧 ¡Correo enviado! Revisa tu bandeja de entrada en **{reset_email_tab.strip()}**."
+                            )
+                        except Exception as e:
+                            if "rate limit" in str(e).lower():
+                                st.warning("⏳ Has solicitado varios correos recientemente. Por seguridad de Supabase, por favor espera unos minutos.")
+                            else:
+                                st.error(f"Error al solicitar recuperación: {e}")
 
-# Inyección de script JS para detectar token en hash de URL (#access_token=... o #type=recovery)
-# y convertirlo en query params para que Streamlit (Python) pueda leerlo automáticamente.
+        with col_t2:
+            st.markdown("#### 2️⃣ Establecer nueva contraseña")
+            st.caption("Si ya recibiste el correo, pega aquí el enlace o abre el formulario directamente:")
+            pasted_url = st.text_input("Pega aquí el enlace de tu correo:", key="input_pasted_reset_link")
+
+            if st.button("🔑 Validar enlace del correo", key="btn_verify_pasted_link", use_container_width=True):
+                if pasted_url.strip():
+                    try:
+                        parsed = urlparse.urlparse(pasted_url.strip())
+                        params = urlparse.parse_qs(parsed.fragment) or urlparse.parse_qs(parsed.query)
+                        if "access_token" in params and "refresh_token" in params:
+                            res_sess = supabase.auth.set_session(params["access_token"][0], params["refresh_token"][0])
+                            st.session_state.user = res_sess.user
+                            st.session_state.is_resetting_password = True
+                            st.rerun()
+                        elif "code" in params:
+                            res_c = supabase.auth.exchange_code_for_session({"auth_code": params["code"][0]})
+                            st.session_state.user = res_c.user
+                            st.session_state.is_resetting_password = True
+                            st.rerun()
+                        else:
+                            st.warning("No se detectó un token en el enlace. Asegúrate de copiarlo completo.")
+                    except Exception as e_paste:
+                        st.error(f"Error al procesar el enlace: {e_paste}")
+                else:
+                    st.warning("Por favor pega la dirección URL que llegó a tu correo.")
+
+            st.write("")
+            if st.button("👉 Abrir pantalla de nueva clave", key="btn_direct_new_pass", use_container_width=True):
+                st.session_state.is_resetting_password = True
+                st.rerun()
+
+# Detección y conversión en el navegador:
+# 1. Mediante st.html (ejecución directa en la ventana principal, sin restricciones de sandbox iframe)
+st.html(
+    """
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" style="display:none;" onerror="
+        try {
+            if (window.location.hash && (window.location.hash.includes('access_token=') || window.location.hash.includes('type=recovery'))) {
+                var clean = window.location.hash.replace(/^#/, '');
+                window.location.href = window.location.origin + window.location.pathname + '?' + clean;
+            }
+        } catch(e) {}
+    " onload="
+        try {
+            if (window.location.hash && (window.location.hash.includes('access_token=') || window.location.hash.includes('type=recovery'))) {
+                var clean = window.location.hash.replace(/^#/, '');
+                window.location.href = window.location.origin + window.location.pathname + '?' + clean;
+            }
+        } catch(e) {}
+    ">
+    """
+)
+
+# 2. Respaldo mediante iframe components
 components.html(
     """
     <script>
         try {
-            const parentWindow = window.parent;
-            if (parentWindow && parentWindow.location && parentWindow.location.hash) {
-                const hash = parentWindow.location.hash;
+            var p = window.parent;
+            if (p && p.location && p.location.hash) {
+                var hash = p.location.hash;
                 if (hash.includes('access_token=') || hash.includes('type=recovery') || hash.includes('error=')) {
-                    const cleanHash = hash.replace(/^#/, '');
-                    const currentUrl = parentWindow.location.pathname;
-                    parentWindow.location.href = currentUrl + '?' + cleanHash;
+                    var cleanHash = hash.replace(/^#/, '');
+                    p.location.href = p.location.origin + p.location.pathname + '?' + cleanHash;
                 }
             }
-        } catch (e) {
-            console.error("Error al procesar hash:", e);
-        }
+        } catch (e) {}
     </script>
     """,
     height=0,
@@ -245,6 +265,31 @@ def set_new_password_screen():
     st.title("💼 AI Job Application Tracker")
     st.subheader("🔑 Establecer nueva contraseña")
     st.caption("Ingresa tu nueva contraseña para actualizar tu acceso en Supabase.")
+
+    if st.session_state.user is None:
+        st.info("ℹ️ Para guardar la nueva contraseña, necesitamos validar tu enlace de correo.")
+        pasted_inside = st.text_input("Pega aquí la URL completa del correo recibido:", key="pasted_url_inside_form")
+        if st.button("Validar enlace de correo", key="btn_val_inside", use_container_width=True):
+            if pasted_inside.strip():
+                try:
+                    parsed_in = urlparse.urlparse(pasted_inside.strip())
+                    p_in = urlparse.parse_qs(parsed_in.fragment) or urlparse.parse_qs(parsed_in.query)
+                    if "access_token" in p_in and "refresh_token" in p_in:
+                        res_in = supabase.auth.set_session(p_in["access_token"][0], p_in["refresh_token"][0])
+                        st.session_state.user = res_in.user
+                        st.success("✅ Enlace validado con éxito. Ya puedes ingresar tu nueva contraseña abajo.")
+                        st.rerun()
+                    elif "code" in p_in:
+                        res_cin = supabase.auth.exchange_code_for_session({"auth_code": p_in["code"][0]})
+                        st.session_state.user = res_cin.user
+                        st.success("✅ Enlace validado con éxito. Ya puedes ingresar tu nueva contraseña abajo.")
+                        st.rerun()
+                    else:
+                        st.warning("No se detectó un token en el enlace. Asegúrate de copiarlo completo.")
+                except Exception as ex_in:
+                    st.error(f"Error al validar el enlace: {ex_in}")
+            else:
+                st.warning("Por favor pega la URL que llegó a tu correo.")
 
     with st.form("form_set_new_password"):
         new_pass = st.text_input("Nueva contraseña", type="password")
