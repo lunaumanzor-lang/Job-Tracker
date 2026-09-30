@@ -1,6 +1,8 @@
 # Variables de entorno y llaves secretas
 .env
 .env.local
+.streamlit/secrets.toml
+.streamlit/
 
 
 # Archivos de caché de Python
