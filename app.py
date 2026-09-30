@@ -6,6 +6,8 @@
 import os
 from datetime import datetime, date
 import streamlit as st
+import streamlit.components.v1 as components
+import urllib.parse as urlparse
 import pandas as pd
 from supabase import create_client, Client
 
@@ -147,10 +149,82 @@ def login_screen():
                             "para crear tu nueva contraseña."
                         )
                     except Exception as e:
-                        st.error(f"Error al solicitar recuperación: {e}")
+                        if "rate limit" in str(e).lower():
+                            st.warning("⏳ Has solicitado varios correos recientemente. Por seguridad de Supabase, por favor espera unos minutos.")
+                        else:
+                            st.error(f"Error al solicitar recuperación: {e}")
+
+        st.divider()
+        with st.expander("🔗 ¿Ya recibiste el enlace en tu correo pero no abrió el formulario?"):
+            st.caption("Puedes pegar aquí la URL completa del enlace que te llegó por correo o abrir directamente el formulario:")
+            pasted_url = st.text_input("Pega la dirección URL recibida:", key="input_pasted_reset_link")
+            col_paste_btn1, col_paste_btn2 = st.columns([0.6, 0.4])
+            with col_paste_btn1:
+                if st.button("Procesar enlace de correo", key="btn_verify_pasted_link", use_container_width=True):
+                    if pasted_url.strip():
+                        try:
+                            parsed = urlparse.urlparse(pasted_url.strip())
+                            params = urlparse.parse_qs(parsed.fragment) or urlparse.parse_qs(parsed.query)
+                            if "access_token" in params and "refresh_token" in params:
+                                res_sess = supabase.auth.set_session(params["access_token"][0], params["refresh_token"][0])
+                                st.session_state.user = res_sess.user
+                                st.session_state.is_resetting_password = True
+                                st.rerun()
+                            elif "code" in params:
+                                res_c = supabase.auth.exchange_code_for_session({"auth_code": params["code"][0]})
+                                st.session_state.user = res_c.user
+                                st.session_state.is_resetting_password = True
+                                st.rerun()
+                            else:
+                                st.warning("El enlace pegado no contiene parámetros de autenticación válidos.")
+                        except Exception as e_paste:
+                            st.error(f"Error al procesar el enlace: {e_paste}")
+                    else:
+                        st.warning("Por favor pega la URL recibida.")
+            with col_paste_btn2:
+                if st.button("Abrir pantalla de nueva contraseña", key="btn_direct_new_pass", use_container_width=True):
+                    st.session_state.is_resetting_password = True
+                    st.rerun()
+
+# Inyección de script JS para detectar token en hash de URL (#access_token=... o #type=recovery)
+# y convertirlo en query params para que Streamlit (Python) pueda leerlo automáticamente.
+components.html(
+    """
+    <script>
+        try {
+            const parentWindow = window.parent;
+            if (parentWindow && parentWindow.location && parentWindow.location.hash) {
+                const hash = parentWindow.location.hash;
+                if (hash.includes('access_token=') || hash.includes('type=recovery') || hash.includes('error=')) {
+                    const cleanHash = hash.replace(/^#/, '');
+                    const currentUrl = parentWindow.location.pathname;
+                    parentWindow.location.href = currentUrl + '?' + cleanHash;
+                }
+            }
+        } catch (e) {
+            console.error("Error al procesar hash:", e);
+        }
+    </script>
+    """,
+    height=0,
+    width=0
+)
+
+# Captura de token de recuperación desde la URL de retorno (Implicit Flow / hash redirigido)
+if "access_token" in st.query_params:
+    try:
+        acc_token = st.query_params.get("access_token")
+        ref_token = st.query_params.get("refresh_token", "")
+        res_session = supabase.auth.set_session(acc_token, ref_token)
+        st.session_state.user = res_session.user
+        st.session_state.is_resetting_password = True
+        st.query_params.clear()
+        st.rerun()
+    except Exception as err_token:
+        st.warning(f"Error al validar token de recuperación: {err_token}")
 
 # Captura de código de recuperación desde la URL de retorno (PKCE / Supabase Auth flow)
-if "code" in st.query_params:
+elif "code" in st.query_params:
     try:
         res_code = supabase.auth.exchange_code_for_session({"auth_code": st.query_params["code"]})
         st.session_state.user = res_code.user
@@ -159,6 +233,12 @@ if "code" in st.query_params:
         st.rerun()
     except Exception as err_code:
         st.warning(f"El enlace de recuperación ya fue utilizado o expiró: {err_code}")
+
+# Captura de posibles errores reportados por Supabase en la URL
+elif "error_description" in st.query_params or "error" in st.query_params:
+    err_msg = st.query_params.get("error_description") or st.query_params.get("error")
+    st.error(f"Error en enlace de autenticación: {err_msg}")
+    st.query_params.clear()
 
 # Pantalla de creación de nueva contraseña tras el enlace de recuperación
 def set_new_password_screen():
@@ -185,6 +265,10 @@ def set_new_password_screen():
                 except Exception as err:
                     st.error(f"Error al actualizar la contraseña: {err}")
 
+    if st.button("⬅️ Cancelar / Volver", key="btn_cancel_reset"):
+        st.session_state.is_resetting_password = False
+        st.rerun()
+
 # Si el usuario viene del enlace de reseteo, mostramos el formulario de cambio de clave
 if st.session_state.get("is_resetting_password"):
     set_new_password_screen()
@@ -196,16 +280,21 @@ if st.session_state.user is None:
     st.stop()  # Detiene la renderización del resto de la app (sidebar, dashboard, formularios)
 
 # 5. Barra superior con el usuario activo y botón de Cerrar Sesión
-col_usr1, col_usr2 = st.columns([0.8, 0.2])
+col_usr1, col_usr2, col_usr3 = st.columns([0.6, 0.2, 0.2])
 with col_usr1:
     st.markdown(f"👤 **Usuario activo:** `{st.session_state.user.email}`")
 with col_usr2:
+    if st.button("🔑 Cambiar Contraseña", use_container_width=True):
+        st.session_state.is_resetting_password = True
+        st.rerun()
+with col_usr3:
     if st.button("Cerrar Sesión", use_container_width=True):
         try:
             supabase.auth.sign_out()
         except Exception:
             pass
         st.session_state.user = None
+        st.session_state.is_resetting_password = False
         st.rerun()
 
 st.divider()
