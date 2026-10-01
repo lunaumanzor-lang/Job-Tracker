@@ -459,105 +459,113 @@ menu_opcion = st.sidebar.radio(
 # ==============================================================================
 if menu_opcion == "📊 Dashboard":
     st.subheader("📈 Resumen General de Postulaciones")
-    st.caption("Vista rápida de métricas clave calculadas en tiempo real directamente desde SQLite mediante consultas SQL COUNT().")
+    st.caption("Vista rápida de métricas clave calculadas en tiempo real directamente desde Supabase.")
 
-    # Obtenemos los conteos calculados por SQL
-    metricas = get_dashboard_counts()
+    try:
+        # 1. Extraemos los datos de la nube (Supabase ya filtra por user_id automáticamente gracias al RLS)
+        response = supabase.table("applications").select("*").execute()
+        datos_dashboard = response.data
+    except Exception as e:
+        st.error(f"Error al cargar datos del Dashboard: {e}")
+        datos_dashboard = []
 
-    # --------------------------------------------------------------------------
-    # CONCEPTO STREAMLIT - st.metric():
-    # st.metric() crea una tarjeta destacada con un valor numérico grande,
-    # un título pequeño ('label') y opcionalmente un texto de ayuda o delta.
-    # Usamos st.columns(5) para distribuirlas horizontalmente en una sola fila.
-    # --------------------------------------------------------------------------
-    col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+    if not datos_dashboard:
+        st.info("No hay datos suficientes para mostrar estadísticas.")
+    else:
+        # 2. Pasamos los datos a Pandas para que tus gráficos originales funcionen
+        df = pd.DataFrame(datos_dashboard)
 
-    with col_m1:
-        st.metric(
-            label="Total Applications",
-            value=metricas["total_applications"]
-        )
+        # Calculamos las métricas clave directamente con Pandas
+        total_apps = len(df)
+        entrevistas = len(df[df["status"].isin(["Recruiter Screen", "Technical Interview", "Final Interview"])])
+        ofertas = len(df[df["status"] == "Offer"])
+        rechazos = len(df[df["status"] == "Rejected"])
+        hoy_str = date.today().strftime("%Y-%m-%d")
+        fup_col = "follow_up_date" if "follow_up_date" in df.columns else None
+        follow_ups = len(df[df[fup_col].notna() & (df[fup_col] <= hoy_str)]) if fup_col else 0
 
-    with col_m2:
-        st.metric(
-            label="Interviews 🎯",
-            value=metricas["interviews"],
-            help="Regla de negocio: incluye Recruiter Screen, Technical Interview y Final Interview"
-        )
+        # Tarjetas destacadas de métricas
+        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
 
-    with col_m3:
-        st.metric(
-            label="Offers 🎉",
-            value=metricas["offers"]
-        )
+        with col_m1:
+            st.metric(
+                label="Total Applications",
+                value=total_apps
+            )
 
-    with col_m4:
-        st.metric(
-            label="Rejections ❌",
-            value=metricas["rejections"]
-        )
+        with col_m2:
+            st.metric(
+                label="Interviews 🎯",
+                value=entrevistas,
+                help="Regla de negocio: incluye Recruiter Screen, Technical Interview y Final Interview"
+            )
 
-    with col_m5:
-        st.metric(
-            label="Follow-ups ⏰",
-            value=metricas["follow_ups"],
-            help="Aplicaciones con fecha de seguimiento registrada próxima o vencida"
-        )
+        with col_m3:
+            st.metric(
+                label="Offers 🎉",
+                value=ofertas
+            )
 
-    st.divider()
+        with col_m4:
+            st.metric(
+                label="Rejections ❌",
+                value=rechazos
+            )
 
-    # --------------------------------------------------------------------------
-    # DESGLOSE COMPLETO POR ESTADO (Status Breakdown)
-    # --------------------------------------------------------------------------
-    st.markdown("### 📌 Estado del Pipeline (Status Breakdown)")
-    st.caption("Cantidad exacta de postulaciones en cada etapa de tu proceso de búsqueda de empleo:")
+        with col_m5:
+            st.metric(
+                label="Follow-ups ⏰",
+                value=follow_ups,
+                help="Aplicaciones con fecha de seguimiento registrada próxima o vencida"
+            )
 
-    desglose_status = get_status_breakdown()
+        st.divider()
 
-    # Fila 1: Etapas activas (Applied, Recruiter Screen, Technical Interview, Final Interview)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("📨 Applied", desglose_status.get("Applied", 0))
-    with c2:
-        st.metric("📞 Recruiter Screen", desglose_status.get("Recruiter Screen", 0))
-    with c3:
-        st.metric("💻 Technical Interview", desglose_status.get("Technical Interview", 0))
-    with c4:
-        st.metric("🤝 Final Interview", desglose_status.get("Final Interview", 0))
+        # --------------------------------------------------------------------------
+        # DESGLOSE COMPLETO POR ESTADO (Status Breakdown)
+        # --------------------------------------------------------------------------
+        st.markdown("### 📌 Estado del Pipeline (Status Breakdown)")
+        st.caption("Cantidad exacta de postulaciones en cada etapa de tu proceso de búsqueda de empleo:")
 
-    # Fila 2: Resultados finales (Offer, Rejected, Ghosted)
-    c5, c6, c7, _ = st.columns(4)
-    with c5:
-        st.metric("🎉 Offer", desglose_status.get("Offer", 0))
-    with c6:
-        st.metric("❌ Rejected", desglose_status.get("Rejected", 0))
-    with c7:
-        st.metric("👻 Ghosted", desglose_status.get("Ghosted", 0))
+        conteo_estados = df["status"].value_counts().to_dict()
+        desglose_status = {opt: conteo_estados.get(opt, 0) for opt in STATUS_OPTIONS}
 
-    # Gráfico interactivo de barras para ver la distribución visual
-    st.markdown("#### 📊 Distribución Visual por Estado")
-    df_status = pd.DataFrame(
-        list(desglose_status.items()),
-        columns=["Estado", "Cantidad"]
-    ).set_index("Estado")
-    st.bar_chart(df_status)
+        # Fila 1: Etapas activas
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("📨 Applied", desglose_status.get("Applied", 0))
+        with c2:
+            st.metric("📞 Recruiter Screen", desglose_status.get("Recruiter Screen", 0))
+        with c3:
+            st.metric("💻 Technical Interview", desglose_status.get("Technical Interview", 0))
+        with c4:
+            st.metric("🤝 Final Interview", desglose_status.get("Final Interview", 0))
 
-    st.divider()
+        # Fila 2: Resultados finales
+        c5, c6, c7, _ = st.columns(4)
+        with c5:
+            st.metric("🎉 Offer", desglose_status.get("Offer", 0))
+        with c6:
+            st.metric("❌ Rejected", desglose_status.get("Rejected", 0))
+        with c7:
+            st.metric("👻 Ghosted", desglose_status.get("Ghosted", 0))
 
-    # Explicación pedagógica de las consultas de agregación utilizadas
-    with st.expander("ℹ️ ¿Cómo se calculan estas métricas en SQL? (Explicación técnica)"):
-        st.markdown("""
-        * **Total Applications:** `SELECT COUNT(*) FROM applications;`  
-          Cuenta el número total de filas en la tabla.
-        * **Interviews:** `SELECT COUNT(*) FROM applications WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview');`  
-          La cláusula `IN (...)` agrupa los 3 estados de entrevista en una sola condición.
-        * **Offers:** `SELECT COUNT(*) FROM applications WHERE status = 'Offer';`
-        * **Rejections:** `SELECT COUNT(*) FROM applications WHERE status = 'Rejected';`
-        * **Follow-ups:** `SELECT COUNT(*) FROM applications WHERE follow_up_date IS NOT NULL AND date(follow_up_date) <= date('now');`  
-          Compara la fecha de seguimiento contra la fecha actual (`date('now')` en SQLite).
-        * **Desglose completo por estado:** `SELECT status, COUNT(*) FROM applications GROUP BY status;`  
-          La cláusula **`GROUP BY`** agrupa automáticamente todas las filas por cada estado distinto y calcula su total en una sola consulta ultra rápida.
-        """)
+        # Gráfico interactivo de barras para ver la distribución visual
+        st.markdown("#### 📊 Distribución Visual por Estado")
+        df_status = pd.DataFrame(
+            list(desglose_status.items()),
+            columns=["Estado", "Cantidad"]
+        ).set_index("Estado")
+        st.bar_chart(df_status)
+
+        st.divider()
+
+        # Explicación técnica
+        with st.expander("ℹ️ ¿Cómo se procesan estas estadísticas? (Conceptos Técnicos)"):
+            st.markdown("""
+            * **Extracción en Tiempo Real:** Los datos se leen directamente desde Supabase en la nube filtrados de forma segura por usuario gracias a **Row Level Security (RLS)**.
+            * **Agregaciones con Pandas:** Las métricas, conteos y porcentajes son procesados dinámicamente en memoria mediante Pandas y visualizados con Streamlit.
+            """)
 
 
 # ==============================================================================
