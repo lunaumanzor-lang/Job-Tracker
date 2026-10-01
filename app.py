@@ -1152,6 +1152,54 @@ elif menu_opcion == "🤖 AI Job Analyzer":
 # PÁGINA 3: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
 # ==============================================================================
 elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
+    # ==========================================
+    # BOTÓN TEMPORAL PARA CORREGIR ORDEN DE MIGRACIÓN (Borrar después)
+    # ==========================================
+    if st.button("🔄 CORREGIR ORDEN Y RE-MIGRAR A LA NUBE (De #1 a la última)"):
+        import sqlite3
+        with st.spinner("Limpiando y re-migrando datos en orden cronológico real..."):
+            try:
+                # 1. Limpiar los registros invertidos actuales en Supabase
+                supabase.table("applications").delete().neq("id", 0).execute()
+
+                # 2. Leer SQLite en orden ASCENDENTE (desde la #1 más vieja hasta la última más nueva)
+                conn = sqlite3.connect("job_tracker.db")
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute("SELECT * FROM applications ORDER BY id ASC")
+                viejas_apps = [dict(r) for r in c.fetchall()]
+                conn.close()
+
+                contador = 0
+                for app in viejas_apps:
+                    nueva_app = {
+                        "id": app.get("id"),
+                        "user_id": st.session_state.user.id,
+                        "company": app.get("company"),
+                        "position": app.get("position"),
+                        "status": app.get("status"),
+                        "application_date": str(app.get("application_date")) if app.get("application_date") else None,
+                        "salary": app.get("salary"),
+                        "work_mode": app.get("work_mode"),
+                        "location": app.get("location"),
+                        "job_url": app.get("job_url"),
+                        "notes": app.get("notes"),
+                        "follow_up_date": str(app.get("follow_up_date")) if app.get("follow_up_date") else None
+                    }
+                    try:
+                        supabase.table("applications").insert(nueva_app).execute()
+                    except Exception:
+                        # Si Supabase no permite ID explícito, lo insertamos sin ID para que auto-incremente en orden ascendente
+                        nueva_app.pop("id", None)
+                        supabase.table("applications").insert(nueva_app).execute()
+                    contador += 1
+
+                st.success(f"🎉 ¡Orden corregido con éxito! Se migraron {contador} aplicaciones en su orden cronológico correcto.")
+                st.rerun()
+            except Exception as ex_mig:
+                st.error(f"Error durante la re-migración: {ex_mig}")
+    # ==========================================
+
     # 1. Obtenemos todas las aplicaciones desde Supabase
     try:
         # Supabase devuelve los datos directamente como una lista de diccionarios
