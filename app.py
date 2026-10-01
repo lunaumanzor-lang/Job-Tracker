@@ -42,8 +42,9 @@ from database import (
     get_skills_by_application
 )
 
-# Módulos de extracción de CV e Inteligencia Artificial
+# Módulos de extracción de CV, Web Scraping e Inteligencia Artificial
 from resume_parser import extract_resume_text
+from job_scraper import extract_job_text_from_url
 from ai_service import (
     extract_skills_and_profile_from_resume,
     analyze_job_description,
@@ -948,23 +949,137 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                 help="Obtén tu clave gratuita en https://aistudio.google.com/app/apikey"
             )
 
-    # 3. Ingreso de Datos (Manual)
+    # 3. Ingreso de Datos (Selección desde aplicaciones existentes o manual)
     st.markdown("### 📥 1. Ingreso de la Vacante")
 
-    # Campo opcional para registrar la URL de la postulación
-    url_input = st.text_input(
-        "Enlace web de la vacante (URL opcional):",
-        value=st.session_state.get("job_url_input", ""),
-        placeholder="https://www.linkedin.com/jobs/view/... o portal de empleo",
-        key="input_url_field"
+    # Obtenemos aplicaciones para el dropdown (de Supabase con fallback a SQLite)
+    try:
+        resp_apps = supabase.table("applications").select("id, company, position, job_url, notes").order("id", desc=False).execute()
+        apps_para_dropdown = resp_apps.data or []
+    except Exception:
+        apps_para_dropdown = get_all_applications()
+
+    metodo_origen = st.radio(
+        "¿Cómo deseas cargar la vacante?",
+        options=[
+            "📋 Seleccionar de aplicaciones existentes",
+            "✏️ Ingresar enlace web (URL) manualmente"
+        ],
+        horizontal=True,
+        key="metodo_origen_analyzer"
     )
 
-    # Área de texto para pegar el Job Description
+    url_para_analizar = st.session_state.get("job_url_input", "")
+
+    if metodo_origen == "📋 Seleccionar de aplicaciones existentes":
+        if not apps_para_dropdown:
+            st.info("ℹ️ No hay aplicaciones registradas todavía. Puedes ingresar una URL o texto manualmente.")
+        else:
+            # Mapeo de aplicaciones para el dropdown
+            mapa_apps = {}
+            for a in apps_para_dropdown:
+                url_ind = "🔗 Con enlace" if a.get("job_url") else "📄 Sin enlace"
+                etiqueta = f"#{a['id']} - {a.get('company', 'Empresa')} | {a.get('position', 'Puesto')} ({url_ind})"
+                mapa_apps[etiqueta] = a
+
+            opciones_apps = ["-- Selecciona una aplicación registrada --"] + list(mapa_apps.keys())
+            
+            idx_app_sel = 0
+            if "last_selected_analyzer_app" in st.session_state and st.session_state["last_selected_analyzer_app"] in opciones_apps:
+                idx_app_sel = opciones_apps.index(st.session_state["last_selected_analyzer_app"])
+
+            seleccion_app = st.selectbox(
+                "Selecciona una postulación para obtener su vacante:",
+                options=opciones_apps,
+                index=idx_app_sel,
+                key="select_app_dropdown_analyzer"
+            )
+
+            if seleccion_app != "-- Selecciona una aplicación registrada --":
+                st.session_state["last_selected_analyzer_app"] = seleccion_app
+                app_obj = mapa_apps[seleccion_app]
+                app_url = (app_obj.get("job_url") or "").strip()
+                url_para_analizar = app_url
+                st.session_state["job_url_input"] = app_url
+
+                col_det1, col_det2 = st.columns([3.5, 1.5])
+                with col_det1:
+                    st.text_input("Enlace web asociado:", value=app_url or "Sin URL registrada", disabled=True, key="disp_app_url_field")
+                with col_det2:
+                    st.write("")
+                    if app_url:
+                        st.markdown(f"<div style='margin-top: 15px;'><a href='{app_url}' target='_blank' rel='noopener noreferrer'>🌐 Abrir enlace</a></div>", unsafe_allow_html=True)
+                    else:
+                        st.caption("ℹ️ Sin URL guardada")
+
+                # Botones para jalar la información
+                col_btn_j1, col_btn_j2 = st.columns(2)
+                with col_btn_j1:
+                    if app_url:
+                        if st.button("🌐 Extraer texto desde la URL", use_container_width=True, key="btn_ext_url_app"):
+                            with st.spinner("Descargando y extrayendo contenido de la página web..."):
+                                exito_scrap, resultado_scrap = extract_job_text_from_url(app_url)
+                                if exito_scrap:
+                                    st.session_state["input_job_text_area"] = resultado_scrap
+                                    st.session_state["job_text_input"] = resultado_scrap
+                                    st.session_state["job_url_input"] = app_url
+                                    st.success("✅ ¡Texto de la vacante extraído exitosamente desde la URL!")
+                                    st.rerun()
+                                else:
+                                    st.warning(f"⚠️ {resultado_scrap}")
+                                    if app_obj.get("notes"):
+                                        st.info("💡 Consejo: Esta postulación tiene notas guardadas. Puedes cargarlas con el botón contiguo.")
+                    else:
+                        st.button("🌐 Extraer texto desde la URL", disabled=True, use_container_width=True, key="btn_ext_url_dis", help="Esta postulación no tiene URL guardada")
+
+                with col_btn_j2:
+                    if app_obj.get("notes"):
+                        if st.button("📝 Cargar notas/descripción guardada", use_container_width=True, key="btn_load_notes_app"):
+                            st.session_state["input_job_text_area"] = app_obj["notes"]
+                            st.session_state["job_text_input"] = app_obj["notes"]
+                            st.session_state["job_url_input"] = app_url
+                            st.success("✅ ¡Notas de la aplicación cargadas en el área de texto!")
+                            st.rerun()
+                    else:
+                        st.button("📝 Cargar notas/descripción guardada", disabled=True, use_container_width=True, key="btn_load_notes_dis", help="Esta postulación no tiene notas guardadas")
+
+    else:
+        # Modo manual
+        col_url_m1, col_url_m2 = st.columns([3.5, 1.5])
+        with col_url_m1:
+            url_manual = st.text_input(
+                "Enlace web de la vacante (URL):",
+                value=st.session_state.get("job_url_input", ""),
+                placeholder="https://www.linkedin.com/jobs/view/... o portal de empleo",
+                key="input_url_manual_field"
+            )
+            url_para_analizar = url_manual.strip()
+            st.session_state["job_url_input"] = url_para_analizar
+        with col_url_m2:
+            st.write("")
+            btn_extraer_manual = st.button("🌐 Extraer de URL", use_container_width=True, key="btn_ext_manual")
+
+        if btn_extraer_manual:
+            if not url_manual.strip():
+                st.warning("⚠️ Por favor ingresa una URL válida antes de extraer.")
+            else:
+                with st.spinner("Descargando y extrayendo contenido de la vacante..."):
+                    exito_sc, texto_sc = extract_job_text_from_url(url_manual.strip())
+                    if exito_sc:
+                        st.session_state["input_job_text_area"] = texto_sc
+                        st.session_state["job_text_input"] = texto_sc
+                        st.session_state["job_url_input"] = url_manual.strip()
+                        st.success("✅ ¡Texto extraído exitosamente de la URL!")
+                        st.rerun()
+                    else:
+                        st.warning(f"⚠️ {texto_sc}")
+
+    # Área de texto para pegar o editar el Job Description
     job_text_val = st.text_area(
         "Texto de la Descripción de la Vacante (Job Description): *",
         value=st.session_state.get("job_text_input", ""),
         height=220,
-        placeholder="Pega aquí el texto completo de la vacante (título, responsabilidades, requisitos técnicos, etc.)...",
+        placeholder="Pega aquí el texto completo de la vacante (título, responsabilidades, requisitos técnicos, etc.) o extráelo usando los botones superiores...",
         key="input_job_text_area"
     )
 
@@ -976,7 +1091,9 @@ elif menu_opcion == "🤖 AI Job Analyzer":
         if st.button("🧹 Limpiar Análisis", use_container_width=True):
             st.session_state.pop("job_analysis_result", None)
             st.session_state.pop("job_text_input", None)
+            st.session_state.pop("input_job_text_area", None)
             st.session_state.pop("job_url_input", None)
+            st.session_state.pop("last_selected_analyzer_app", None)
             st.rerun()
 
     # Ejecución del análisis al presionar el botón
@@ -997,8 +1114,8 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                         )
                         st.session_state["job_analysis_result"] = resultado_analisis
                         st.session_state["job_text_input"] = job_text_val
-                        if url_input.strip():
-                            st.session_state["job_url_input"] = url_input.strip()
+                        if url_para_analizar.strip():
+                            st.session_state["job_url_input"] = url_para_analizar.strip()
                         st.success("🎉 ¡Análisis y cálculo de match completados exitosamente!")
                         st.rerun()
                     except Exception as err:
@@ -1127,17 +1244,82 @@ elif menu_opcion == "🤖 AI Job Analyzer":
             else:
                 fecha_str = app_date_val.strftime("%Y-%m-%d")
                 salario_limpio = salary_val.strip() if salary_val.strip() else None
-                nuevo_id = insert_application(
-                    company=company_val.strip(),
-                    position=position_val.strip(),
-                    status=status_val,
-                    application_date=fecha_str,
-                    salary=salario_limpio,
-                    work_mode=work_mode_val,
-                    location=location_val.strip() if location_val.strip() else None,
-                    job_url=url_guardar_val.strip() if url_guardar_val.strip() else None,
-                    notes=notes_val.strip() if notes_val.strip() else None
-                )
+                url_final = url_guardar_val.strip() if url_guardar_val.strip() else None
+                notas_finales = notes_val.strip() if notes_val.strip() else None
+
+                # 1. Calculamos ID consecutivo y guardamos en Supabase
+                proximo_id = None
+                try:
+                    res_max = supabase.table("applications").select("id").order("id", desc=True).limit(1).execute()
+                    if res_max.data and len(res_max.data) > 0:
+                        proximo_id = int(res_max.data[0]["id"]) + 1
+                    else:
+                        proximo_id = 1
+                except Exception:
+                    proximo_id = None
+
+                nueva_app_cloud = {
+                    "user_id": st.session_state.user.id,
+                    "company": company_val.strip(),
+                    "position": position_val.strip(),
+                    "status": status_val,
+                    "application_date": fecha_str,
+                    "salary": salario_limpio,
+                    "work_mode": work_mode_val,
+                    "location": location_val.strip() if location_val.strip() else None,
+                    "job_url": url_final,
+                    "notes": notas_finales
+                }
+                if proximo_id is not None:
+                    nueva_app_cloud["id"] = proximo_id
+
+                nuevo_id = None
+                try:
+                    try:
+                        res_sb = supabase.table("applications").insert(nueva_app_cloud).execute()
+                    except Exception:
+                        nueva_app_cloud.pop("id", None)
+                        res_sb = supabase.table("applications").insert(nueva_app_cloud).execute()
+                    nuevo_id = res_sb.data[0]["id"]
+                except Exception as ex_sb:
+                    st.warning(f"Aviso al guardar en Supabase: {ex_sb}")
+
+                # 2. Guardamos también en SQLite local por consistencia
+                try:
+                    from database import get_connection
+                    with get_connection() as conn:
+                        c_loc = conn.cursor()
+                        if nuevo_id is not None:
+                            c_loc.execute("""
+                                INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (nuevo_id, company_val.strip(), position_val.strip(), status_val, fecha_str, salario_limpio, work_mode_val, location_val.strip() if location_val.strip() else None, url_final, notas_finales))
+                        else:
+                            nuevo_id = insert_application(
+                                company=company_val.strip(),
+                                position=position_val.strip(),
+                                status=status_val,
+                                application_date=fecha_str,
+                                salary=salario_limpio,
+                                work_mode=work_mode_val,
+                                location=location_val.strip() if location_val.strip() else None,
+                                job_url=url_final,
+                                notes=notas_finales
+                            )
+                        conn.commit()
+                except Exception:
+                    if nuevo_id is None:
+                        nuevo_id = insert_application(
+                            company=company_val.strip(),
+                            position=position_val.strip(),
+                            status=status_val,
+                            application_date=fecha_str,
+                            salary=salario_limpio,
+                            work_mode=work_mode_val,
+                            location=location_val.strip() if location_val.strip() else None,
+                            job_url=url_final,
+                            notes=notas_finales
+                        )
 
                 # PASO 0: Persistir las habilidades evaluadas en la tabla 'skills'
                 skills_a_guardar = []
@@ -1148,11 +1330,11 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                 for s in missing_skills:
                     skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "missing"})
 
-                if skills_a_guardar:
+                if skills_a_guardar and nuevo_id:
                     total_guardadas = insert_application_skills(nuevo_id, skills_a_guardar)
-                    st.caption(f"💾 Se vincularon **{total_guardadas} habilidades** evaluadas a esta postulación en SQLite.")
+                    st.caption(f"💾 Se vincularon **{total_guardadas} habilidades** evaluadas a esta postulación.")
 
-                st.success(f"🎉 ¡Aplicación a **{company_val}** (#{nuevo_id}) guardada exitosamente en la base de datos!")
+                st.success(f"🎉 ¡Aplicación a **{company_val}** (#{nuevo_id}) guardada exitosamente en la nube y en tu base de datos!")
                 st.balloons()
 
 
