@@ -70,6 +70,11 @@ url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
+# Inyectar el token de autenticación del usuario en el cliente PostgREST
+# para que todas las operaciones de base de datos viajen como usuario autenticado (RLS auth.uid())
+if "access_token" in st.session_state and st.session_state.access_token:
+    supabase.postgrest.auth(st.session_state.access_token)
+
 # 2. Inicializar el usuario en el estado de la sesión
 if 'user' not in st.session_state:
     st.session_state.user = None
@@ -91,6 +96,10 @@ def login_screen():
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                     st.session_state.user = res.user
+                    if res.session:
+                        st.session_state.access_token = res.session.access_token
+                        st.session_state.refresh_token = res.session.refresh_token
+                        supabase.postgrest.auth(res.session.access_token)
                     st.rerun()  # Refresca la pantalla para acceder a la aplicación
                 except Exception as e:
                     st.error(f"Credenciales incorrectas: {e}")
@@ -194,6 +203,10 @@ def login_screen():
                             # 2. Actualizar contraseña del usuario autenticado
                             supabase.auth.update_user({"password": new_pass})
                             st.session_state.user = res_otp.user
+                            if res_otp.session:
+                                st.session_state.access_token = res_otp.session.access_token
+                                st.session_state.refresh_token = res_otp.session.refresh_token
+                                supabase.postgrest.auth(res_otp.session.access_token)
                             st.session_state.is_resetting_password = False
                             st.success("🎉 ¡Tu contraseña ha sido actualizada con éxito! Ingresando a la plataforma...")
                             st.rerun()
@@ -211,11 +224,19 @@ def login_screen():
                         if "access_token" in params and "refresh_token" in params:
                             res_sess = supabase.auth.set_session(params["access_token"][0], params["refresh_token"][0])
                             st.session_state.user = res_sess.user
+                            if res_sess.session:
+                                st.session_state.access_token = res_sess.session.access_token
+                                st.session_state.refresh_token = res_sess.session.refresh_token
+                                supabase.postgrest.auth(res_sess.session.access_token)
                             st.session_state.is_resetting_password = True
                             st.rerun()
                         elif "code" in params:
                             res_c = supabase.auth.exchange_code_for_session({"auth_code": params["code"][0]})
                             st.session_state.user = res_c.user
+                            if res_c.session:
+                                st.session_state.access_token = res_c.session.access_token
+                                st.session_state.refresh_token = res_c.session.refresh_token
+                                supabase.postgrest.auth(res_c.session.access_token)
                             st.session_state.is_resetting_password = True
                             st.rerun()
                         else:
@@ -274,6 +295,10 @@ if "access_token" in st.query_params:
         ref_token = st.query_params.get("refresh_token", "")
         res_session = supabase.auth.set_session(acc_token, ref_token)
         st.session_state.user = res_session.user
+        if res_session.session:
+            st.session_state.access_token = res_session.session.access_token
+            st.session_state.refresh_token = res_session.session.refresh_token
+            supabase.postgrest.auth(res_session.session.access_token)
         st.session_state.is_resetting_password = True
         st.query_params.clear()
         st.rerun()
@@ -285,6 +310,10 @@ elif "code" in st.query_params:
     try:
         res_code = supabase.auth.exchange_code_for_session({"auth_code": st.query_params["code"]})
         st.session_state.user = res_code.user
+        if res_code.session:
+            st.session_state.access_token = res_code.session.access_token
+            st.session_state.refresh_token = res_code.session.refresh_token
+            supabase.postgrest.auth(res_code.session.access_token)
         st.session_state.is_resetting_password = True
         st.query_params.clear()
         st.rerun()
@@ -376,6 +405,8 @@ with col_usr3:
         except Exception:
             pass
         st.session_state.user = None
+        st.session_state.access_token = None
+        st.session_state.refresh_token = None
         st.session_state.is_resetting_password = False
         st.rerun()
 
@@ -1606,4 +1637,7 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
                 
                 st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
             except Exception as e:
-                st.error(f"⚠️ Error al guardar en Supabase: {e}")
+                if "row-level security" in str(e).lower() and ("access_token" not in st.session_state or not st.session_state.access_token):
+                    st.error("⚠️ Tu sesión actual no tiene el token de base de datos activado. Por favor haz clic en **Cerrar Sesión** (arriba a la derecha) e inicia sesión nuevamente para sincronizar los permisos RLS.")
+                else:
+                    st.error(f"⚠️ Error al guardar en Supabase: {e}")
