@@ -1156,19 +1156,17 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
     # BOTÓN TEMPORAL PARA CORREGIR ORDEN DE MIGRACIÓN (Borrar después)
     # ==========================================
     if st.button("🔄 CORREGIR ORDEN Y RE-MIGRAR A LA NUBE (De #1 a la última)"):
-        import sqlite3
+        from database import get_connection
         with st.spinner("Limpiando y re-migrando datos en orden cronológico real..."):
             try:
                 # 1. Limpiar los registros invertidos actuales en Supabase
                 supabase.table("applications").delete().neq("id", 0).execute()
 
                 # 2. Leer SQLite en orden ASCENDENTE (desde la #1 más vieja hasta la última más nueva)
-                conn = sqlite3.connect("job_tracker.db")
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM applications ORDER BY id ASC")
-                viejas_apps = [dict(r) for r in c.fetchall()]
-                conn.close()
+                with get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM applications ORDER BY id ASC")
+                    viejas_apps = [dict(r) for r in c.fetchall()]
 
                 contador = 0
                 for app in viejas_apps:
