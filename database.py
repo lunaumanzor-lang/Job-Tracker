@@ -361,15 +361,24 @@ def update_application(
 # ------------------------------------------------------------------------------
 def delete_application(app_id: int) -> bool:
     """
-    Elimina una aplicación por su ID. Gracias a ON DELETE CASCADE,
-    sus entrevistas y skills asociadas también se limpiarán automáticamente.
+    Elimina una aplicación por su ID y reacomoda los IDs de todas las aplicaciones
+    posteriores (id = id - 1) para mantener una secuencia continua sin huecos.
     """
-    query = "DELETE FROM applications WHERE id = ?;"
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (app_id,))
+        cursor.execute("PRAGMA foreign_keys = OFF;")
+        cursor.execute("DELETE FROM applications WHERE id = ?;", (app_id,))
+        deleted = cursor.rowcount > 0
+        if deleted:
+            cursor.execute("DELETE FROM skills WHERE application_id = ?;", (app_id,))
+            cursor.execute("DELETE FROM interviews WHERE application_id = ?;", (app_id,))
+            cursor.execute("UPDATE applications SET id = id - 1 WHERE id > ?;", (app_id,))
+            cursor.execute("UPDATE skills SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
+            cursor.execute("UPDATE interviews SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
+            cursor.execute("UPDATE sqlite_sequence SET seq = COALESCE((SELECT MAX(id) FROM applications), 0) WHERE name = 'applications';")
+        cursor.execute("PRAGMA foreign_keys = ON;")
         conn.commit()
-        return cursor.rowcount > 0
+        return deleted
 
 
 # ------------------------------------------------------------------------------

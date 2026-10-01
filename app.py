@@ -1160,51 +1160,6 @@ elif menu_opcion == "🤖 AI Job Analyzer":
 # PÁGINA 3: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
 # ==============================================================================
 elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
-    # ==========================================
-    # BOTÓN TEMPORAL PARA CORREGIR ORDEN DE MIGRACIÓN (Borrar después)
-    # ==========================================
-    if st.button("🔄 CORREGIR ORDEN Y RE-MIGRAR A LA NUBE (De #1 a la última)"):
-        from database import get_connection
-        with st.spinner("Limpiando y re-migrando datos en orden cronológico real..."):
-            try:
-                # 1. Limpiar los registros invertidos actuales en Supabase
-                supabase.table("applications").delete().neq("id", 0).execute()
-
-                # 2. Leer SQLite en orden ASCENDENTE (desde la #1 más vieja hasta la última más nueva)
-                with get_connection() as conn:
-                    c = conn.cursor()
-                    c.execute("SELECT * FROM applications ORDER BY id ASC")
-                    viejas_apps = [dict(r) for r in c.fetchall()]
-
-                contador = 0
-                for app in viejas_apps:
-                    nueva_app = {
-                        "id": app.get("id"),
-                        "user_id": st.session_state.user.id,
-                        "company": app.get("company"),
-                        "position": app.get("position"),
-                        "status": app.get("status"),
-                        "application_date": str(app.get("application_date")) if app.get("application_date") else None,
-                        "salary": app.get("salary"),
-                        "work_mode": app.get("work_mode"),
-                        "location": app.get("location"),
-                        "job_url": app.get("job_url"),
-                        "notes": app.get("notes"),
-                        "follow_up_date": str(app.get("follow_up_date")) if app.get("follow_up_date") else None
-                    }
-                    try:
-                        supabase.table("applications").insert(nueva_app).execute()
-                    except Exception:
-                        # Si Supabase no permite ID explícito, lo insertamos sin ID para que auto-incremente en orden ascendente
-                        nueva_app.pop("id", None)
-                        supabase.table("applications").insert(nueva_app).execute()
-                    contador += 1
-
-                st.success(f"🎉 ¡Orden corregido con éxito! Se migraron {contador} aplicaciones en su orden cronológico correcto.")
-                st.rerun()
-            except Exception as ex_mig:
-                st.error(f"Error durante la re-migración: {ex_mig}")
-    # ==========================================
 
     # 1. Obtenemos todas las aplicaciones desde Supabase
     try:
@@ -1352,9 +1307,34 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                         confirmar_borrado = st.checkbox("Sí, confirmo que deseo eliminar este registro.", key=f"conf_del_{app_actual['id']}")
                         
                         if st.button("🚨 Eliminar Definitivamente", type="primary", disabled=not confirmar_borrado):
-                            delete_application(app_actual["id"])
-                            st.success(f"Postulación #{app_actual['id']} eliminada con éxito.")
-                            st.rerun()
+                            id_a_borrar = app_actual["id"]
+                            with st.spinner(f"Eliminando postulación #{id_a_borrar} y reordenando las aplicaciones posteriores..."):
+                                error_supabase = None
+                                try:
+                                    # 1. Eliminar la fila seleccionada en Supabase
+                                    supabase.table("applications").delete().eq("id", id_a_borrar).execute()
+                                    
+                                    # 2. Re-acomodar el orden en Supabase: desplazar hacia abajo (id = id - 1)
+                                    # las aplicaciones posteriores en orden ascendente para evitar colisiones de clave primaria
+                                    resp_posteriores = supabase.table("applications").select("id").gt("id", id_a_borrar).order("id", desc=False).execute()
+                                    for fila in resp_posteriores.data or []:
+                                        viejo_id = fila["id"]
+                                        nuevo_id = viejo_id - 1
+                                        supabase.table("applications").update({"id": nuevo_id}).eq("id", viejo_id).execute()
+                                except Exception as ex_sup:
+                                    error_supabase = ex_sup
+
+                                # 3. Sincronizar el borrado y reajuste en SQLite local
+                                try:
+                                    delete_application(id_a_borrar)
+                                except Exception as ex_sql:
+                                    pass
+
+                                if error_supabase:
+                                    st.error(f"Error al sincronizar con Supabase: {error_supabase}")
+                                else:
+                                    st.success(f"✅ Postulación #{id_a_borrar} eliminada con éxito y el orden de todas las aplicaciones posteriores fue reajustado automáticamente.")
+                                    st.rerun()
 
                 # PANEL DERECHO: FORMULARIO DE EDICIÓN (Requisito 4)
                 with col_edicion:
@@ -1410,22 +1390,44 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                         if not edit_company.strip() or not edit_position.strip():
                             st.error("Company y Position no pueden estar vacíos.")
                         else:
-                            # Actualizamos en SQLite
                             fecha_str = edit_date.strftime("%Y-%m-%d")
                             fup_str = edit_fup.strftime("%Y-%m-%d") if edit_fup else None
-                            update_application(
-                                app_id=app_actual["id"],
-                                company=edit_company.strip(),
-                                position=edit_position.strip(),
-                                status=edit_status,
-                                application_date=fecha_str,
-                                salary=edit_salary.strip() if edit_salary else None,
-                                work_mode=edit_mode,
-                                location=edit_location.strip() if edit_location else None,
-                                job_url=edit_job_url.strip() if edit_job_url else None,
-                                notes=edit_notes.strip() if edit_notes else None,
-                                follow_up_date=fup_str
-                            )
+                            
+                            # Actualizamos en SQLite local
+                            try:
+                                update_application(
+                                    app_id=app_actual["id"],
+                                    company=edit_company.strip(),
+                                    position=edit_position.strip(),
+                                    status=edit_status,
+                                    application_date=fecha_str,
+                                    salary=edit_salary.strip() if edit_salary else None,
+                                    work_mode=edit_mode,
+                                    location=edit_location.strip() if edit_location else None,
+                                    job_url=edit_job_url.strip() if edit_job_url else None,
+                                    notes=edit_notes.strip() if edit_notes else None,
+                                    follow_up_date=fup_str
+                                )
+                            except Exception as ex_sql:
+                                pass
+
+                            # Actualizamos en Supabase (en la nube)
+                            try:
+                                supabase.table("applications").update({
+                                    "company": edit_company.strip(),
+                                    "position": edit_position.strip(),
+                                    "status": edit_status,
+                                    "application_date": fecha_str,
+                                    "salary": edit_salary.strip() if edit_salary else None,
+                                    "work_mode": edit_mode,
+                                    "location": edit_location.strip() if edit_location else None,
+                                    "job_url": edit_job_url.strip() if edit_job_url else None,
+                                    "notes": edit_notes.strip() if edit_notes else None,
+                                    "follow_up_date": fup_str
+                                }).eq("id", app_actual["id"]).execute()
+                            except Exception as ex_sup_edit:
+                                st.warning(f"Aviso al sincronizar edición con Supabase: {ex_sup_edit}")
+
                             st.success(f"✅ ¡Postulación #{app_actual['id']} actualizada con éxito!")
                             st.rerun()
 
@@ -1674,6 +1676,17 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
             fecha_str = app_date.strftime("%Y-%m-%d")
             fup_nuevo_str = fup_date_nuevo.strftime("%Y-%m-%d") if (asignar_fup_nuevo and fup_date_nuevo) else None
             
+            # Calculamos el próximo ID consecutivo para mantener la secuencia continua
+            proximo_id = None
+            try:
+                res_max = supabase.table("applications").select("id").order("id", desc=True).limit(1).execute()
+                if res_max.data and len(res_max.data) > 0:
+                    proximo_id = int(res_max.data[0]["id"]) + 1
+                else:
+                    proximo_id = 1
+            except Exception:
+                proximo_id = None
+
             # 1. Empaquetar los datos para Supabase
             nueva_aplicacion = {
                 "user_id": st.session_state.user.id,  # Vincula el registro al usuario logueado
@@ -1688,13 +1701,45 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
                 "notes": notes.strip() if notes else None,
                 "follow_up_date": fup_nuevo_str
             }
+            if proximo_id is not None:
+                nueva_aplicacion["id"] = proximo_id
 
             try:
                 # 2. Enviar a Supabase
-                response = supabase.table("applications").insert(nueva_aplicacion).execute()
+                try:
+                    response = supabase.table("applications").insert(nueva_aplicacion).execute()
+                except Exception:
+                    # En caso de restricción con ID explícito, insertar con auto-secuencia
+                    nueva_aplicacion.pop("id", None)
+                    response = supabase.table("applications").insert(nueva_aplicacion).execute()
                 
                 # 3. Extraer el nuevo ID de la respuesta de la nube
                 nuevo_id = response.data[0]['id']
+
+                # 4. Sincronizar en la base SQLite local por consistencia
+                try:
+                    from database import get_connection
+                    with get_connection() as conn:
+                        c_loc = conn.cursor()
+                        c_loc.execute("""
+                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            nuevo_id,
+                            company.strip(),
+                            position.strip(),
+                            status,
+                            fecha_str,
+                            salary_limpio,
+                            work_mode,
+                            location.strip() if location else None,
+                            job_url.strip() if job_url else None,
+                            notes.strip() if notes else None,
+                            fup_nuevo_str
+                        ))
+                        conn.commit()
+                except Exception:
+                    pass
                 
                 st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
             except Exception as e:
