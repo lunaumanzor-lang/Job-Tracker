@@ -1393,27 +1393,9 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                             fecha_str = edit_date.strftime("%Y-%m-%d")
                             fup_str = edit_fup.strftime("%Y-%m-%d") if edit_fup else None
                             
-                            # Actualizamos en SQLite local
+                            # 1. Actualizamos en Supabase (en la nube)
                             try:
-                                update_application(
-                                    app_id=app_actual["id"],
-                                    company=edit_company.strip(),
-                                    position=edit_position.strip(),
-                                    status=edit_status,
-                                    application_date=fecha_str,
-                                    salary=edit_salary.strip() if edit_salary else None,
-                                    work_mode=edit_mode,
-                                    location=edit_location.strip() if edit_location else None,
-                                    job_url=edit_job_url.strip() if edit_job_url else None,
-                                    notes=edit_notes.strip() if edit_notes else None,
-                                    follow_up_date=fup_str
-                                )
-                            except Exception as ex_sql:
-                                pass
-
-                            # Actualizamos en Supabase (en la nube)
-                            try:
-                                supabase.table("applications").update({
+                                datos_actualizados = {
                                     "company": edit_company.strip(),
                                     "position": edit_position.strip(),
                                     "status": edit_status,
@@ -1424,12 +1406,31 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                                     "job_url": edit_job_url.strip() if edit_job_url else None,
                                     "notes": edit_notes.strip() if edit_notes else None,
                                     "follow_up_date": fup_str
-                                }).eq("id", app_actual["id"]).execute()
-                            except Exception as ex_sup_edit:
-                                st.warning(f"Aviso al sincronizar edición con Supabase: {ex_sup_edit}")
+                                }
+                                supabase.table("applications").update(datos_actualizados).eq("id", app_actual["id"]).execute()
+                                
+                                # 2. Sincronizamos también en SQLite local por consistencia
+                                try:
+                                    update_application(
+                                        app_id=app_actual["id"],
+                                        company=edit_company.strip(),
+                                        position=edit_position.strip(),
+                                        status=edit_status,
+                                        application_date=fecha_str,
+                                        salary=edit_salary.strip() if edit_salary else None,
+                                        work_mode=edit_mode,
+                                        location=edit_location.strip() if edit_location else None,
+                                        job_url=edit_job_url.strip() if edit_job_url else None,
+                                        notes=edit_notes.strip() if edit_notes else None,
+                                        follow_up_date=fup_str
+                                    )
+                                except Exception:
+                                    pass
 
-                            st.success(f"✅ ¡Postulación #{app_actual['id']} actualizada con éxito!")
-                            st.rerun()
+                                st.success("¡Aplicación actualizada con éxito en la nube!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al actualizar en Supabase: {e}")
 
                 # --------------------------------------------------------------
                 # FASE 5.3: INTERVIEW COACH INTEGRADO
