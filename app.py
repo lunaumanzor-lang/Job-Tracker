@@ -1152,8 +1152,14 @@ elif menu_opcion == "🤖 AI Job Analyzer":
 # PÁGINA 3: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
 # ==============================================================================
 elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
-    # 1. Obtenemos todas las aplicaciones desde SQLite
-    todas_las_apps = get_all_applications()
+    # 1. Obtenemos todas las aplicaciones desde Supabase
+    try:
+        # Supabase devuelve los datos directamente como una lista de diccionarios
+        response = supabase.table("applications").select("*").order("id", desc=True).execute()
+        todas_las_apps = response.data
+    except Exception as e:
+        st.error(f"Error al leer la base de datos en la nube: {e}")
+        todas_las_apps = []
 
     if not todas_las_apps:
         st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera.")
