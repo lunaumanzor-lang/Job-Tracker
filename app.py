@@ -1623,7 +1623,7 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
         with col5:
             work_mode = st.radio("Work Mode", options=["Remote", "Hybrid", "On-site"], horizontal=True, key="new_work_mode")
         with col6:
-            salary_input = st.text_input("Salary (USD)", placeholder="Ej. 5000", key="new_salary")
+            salary_input = st.text_input("Salary", placeholder="Ej. 5000 USD, TBD, Por confirmar...", key="new_salary")
 
         col7, col8 = st.columns(2)
         with col7:
@@ -1656,7 +1656,8 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
                 salario_num = float(salario_txt)
                 salary_limpio = f"{int(salario_num)} USD"
             except ValueError:
-                errores.append("El campo **Salary** debe ser un número válido (ej. 5000).")
+                # Permite ingresar texto libre como TBD, Por confirmar, aún no lo sé, etc.
+                salary_limpio = salary_input.strip()
 
         if errores:
             for err in errores:
