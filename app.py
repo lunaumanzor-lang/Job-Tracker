@@ -1152,38 +1152,6 @@ elif menu_opcion == "🤖 AI Job Analyzer":
 # PÁGINA 3: VER, BUSCAR, FILTRAR, EDITAR Y ELIMINAR APLICACIONES
 # ==============================================================================
 elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
-    # ==========================================
-    # BOTÓN TEMPORAL DE MIGRACIÓN (Borrar después)
-    # ==========================================
-    if st.button("🚨 MIGRAR DATOS DE SQLITE A LA NUBE"):
-        from database import get_all_applications
-        viejas_apps = get_all_applications()
-        
-        contador_exito = 0
-        with st.spinner("Subiendo datos a Supabase..."):
-            for app in viejas_apps:
-                try:
-                    nueva_app = {
-                        "user_id": st.session_state.user.id,
-                        "company": app.get("company"),
-                        "position": app.get("position"),
-                        "status": app.get("status"),
-                        "application_date": str(app.get("application_date")) if app.get("application_date") else None,
-                        "salary": app.get("salary"),
-                        "work_mode": app.get("work_mode"),
-                        "location": app.get("location"),
-                        "job_url": app.get("job_url"),
-                        "notes": app.get("notes"),
-                        "follow_up_date": str(app.get("follow_up_date")) if app.get("follow_up_date") else None
-                    }
-                    supabase.table("applications").insert(nueva_app).execute()
-                    contador_exito += 1
-                except Exception as e:
-                    st.error(f"Error al subir la aplicación {app.get('company')}: {e}")
-            
-        st.success(f"¡Migración completada! {contador_exito} aplicaciones se movieron a la nube con éxito.")
-    # ==========================================
-
     # 1. Obtenemos todas las aplicaciones desde Supabase
     try:
         # Supabase devuelve los datos directamente como una lista de diccionarios
