@@ -1581,16 +1581,29 @@ elif menu_opcion == "➕ Agregar Nueva Aplicación":
         else:
             fecha_str = app_date.strftime("%Y-%m-%d")
             fup_nuevo_str = fup_date_nuevo.strftime("%Y-%m-%d") if (asignar_fup_nuevo and fup_date_nuevo) else None
-            nuevo_id = insert_application(
-                company=company.strip(),
-                position=position.strip(),
-                status=status,
-                application_date=fecha_str,
-                salary=salary_limpio,
-                work_mode=work_mode,
-                location=location.strip() if location else None,
-                job_url=job_url.strip() if job_url else None,
-                notes=notes.strip() if notes else None,
-                follow_up_date=fup_nuevo_str
-            )
-            st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito con ID #{nuevo_id}!")
+            
+            # 1. Empaquetar los datos para Supabase
+            nueva_aplicacion = {
+                "user_id": st.session_state.user.id,  # Vincula el registro al usuario logueado
+                "company": company.strip(),
+                "position": position.strip(),
+                "status": status,
+                "application_date": fecha_str,
+                "salary": salary_limpio,
+                "work_mode": work_mode,
+                "location": location.strip() if location else None,
+                "job_url": job_url.strip() if job_url else None,
+                "notes": notes.strip() if notes else None,
+                "follow_up_date": fup_nuevo_str
+            }
+
+            try:
+                # 2. Enviar a Supabase
+                response = supabase.table("applications").insert(nueva_aplicacion).execute()
+                
+                # 3. Extraer el nuevo ID de la respuesta de la nube
+                nuevo_id = response.data[0]['id']
+                
+                st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
+            except Exception as e:
+                st.error(f"⚠️ Error al guardar en Supabase: {e}")
