@@ -668,12 +668,12 @@ menu_opcion = st.sidebar.radio(
     "Selecciona una sección:",
     [
         "📊 Dashboard",
-        "📈 Statistics",
-        "👤 My Profile",
-        "🤖 AI Job Analyzer",
-        "📋 Ver y Gestionar Aplicaciones",
         "➕ Agregar Nueva Aplicación",
-        "🎯 Prepare me for this job"
+        "📋 Ver y Gestionar Aplicaciones",
+        "🤖 AI Job Analyzer",
+        "🎯 Prepare me for this job",
+        "📈 Statistics",
+        "👤 My Profile"
     ],
     index=0
 )
