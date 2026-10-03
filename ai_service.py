@@ -7,7 +7,8 @@ import os
 import re
 import json
 import logging
-from typing import Dict, Any, Optional
+import urllib.parse as urlparse
+from typing import Dict, Any, Optional, Tuple, List
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -454,17 +455,15 @@ def generate_skill_gaps_study(
     position: str,
     company: str,
     api_key: Optional[str] = None
-) -> str:
+) -> List[Dict[str, Any]]:
     """
-    Genera una guía de estudio exprés orientada a entrevistas técnicas sobre
-    las habilidades faltantes (missing_skills) detectadas para el puesto.
+    Genera el análisis de brechas (Skill Gaps Study) estructurado:
+    1. El LLM devuelve cada missing skill en JSON con su contexto y categoría (sin URLs).
+    2. Python traduce la categoría a recursos reales usando skill_resources.py
+       (o la API oficial de Microsoft Learn si es del stack Azure/MS).
     """
     if not missing_skills:
-        return (
-            "🎉 **¡Felicidades!** No se detectaron brechas técnicas críticas en esta postulación. "
-            "Tu perfil cubre los requerimientos técnicos registrados. Te recomendamos enfocarte "
-            "directamente en el simulador de preguntas para pulir tus respuestas de arquitectura y liderazgo."
-        )
+        return []
 
     key = api_key or get_api_key()
     if not key:
@@ -475,22 +474,45 @@ def generate_skill_gaps_study(
     skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else str(missing_skills)
 
     prompt = f"""
-Eres un Lead Architect y entrevistador técnico senior preparando a un candidato para una entrevista.
+Eres un Lead Architect y reclutador técnico senior preparando a un candidato para una entrevista.
 El candidato postula al rol de '{position}' en '{company}'.
-En el análisis de la vacante se detectaron las siguientes habilidades o tecnologías que NO están en su perfil principal:
+En el análisis de la vacante se detectaron las siguientes habilidades o tecnologías faltantes (missing skills):
 {skills_str}
 
-Tu tarea es generar una GUÍA DE ESTUDIO RÁPIDA (Skill Gaps Study Guide) en formato Markdown.
-NO hagas un curso académico largo; genera un resumen práctico y estratégico para que el candidato pueda defenderse con solvencia y credibilidad en una entrevista técnica.
+Tu tarea es analizar cada habilidad faltante y devolver un array JSON.
+IMPORTANTE: NO generes URLs, enlaces ni nombres de cursos específicos.
 
-Para cada una de las tecnologías faltantes incluye:
-1. ### 🛠️ [Nombre de la Tecnología]
-2. **¿Qué es y qué problema resuelve?** (Explicación concisa en 2 o 3 oraciones, usando analogías claras).
-3. **Casos de uso clave en este puesto:** Cómo se usa en el día a día para un rol de '{position}'.
-4. **Vocabulario y conceptos indispensables:** 3 o 4 términos o comandos clave que el entrevistador esperará escuchar.
-5. **Cómo defenderte en la entrevista:** Cómo responder con honestidad y confianza si te preguntan por ella (ejemplo: apoyándote en tecnologías análogas que ya dominas, explicando los fundamentos conceptuales y demostrando alta curva de aprendizaje).
+Para CADA skill en la lista anterior, devuelve un objeto con ESTRICTAMENTE estos campos:
+- "skill": Nombre de la habilidad o tecnología.
+- "importance": "Required" o "Nice-to-have".
+- "context": Breve razón (1 o 2 oraciones) de por qué esta vacante para '{position}' la requiere.
+- "category": OBLIGATORIAMENTE una de las siguientes 10 categorías exactas:
+    * Operating Systems
+    * Cloud & Virtualization
+    * CI/CD & DevOps
+    * Databases
+    * Security
+    * Identity & Access Management
+    * Programming & Scripting
+    * Monitoring
+    * Collaboration & ITSM
+    * Business/Soft Skills
+- "key_concepts": Resumen exprés (2 oraciones) de qué conceptos o términos clave indispensables debe mencionar el candidato para defenderse con solvencia técnica en la entrevista.
 
-Sé directo, profesional, motivador y usa formato Markdown limpio.
+REGLAS DE SALIDA:
+- Responde ÚNICAMENTE con un array JSON válido de objetos.
+- NO agregues explicaciones fuera del bloque JSON.
+
+Ejemplo exacto de formato:
+[
+  {{
+    "skill": "Kubernetes",
+    "importance": "Required",
+    "context": "El núcleo del proyecto es una plataforma corriendo sobre Kubernetes y se requiere experiencia en producción.",
+    "category": "CI/CD & DevOps",
+    "key_concepts": "Comprender Pods, Deployments, Services y cómo diagnosticar problemas con kubectl logs y describe."
+  }}
+]
 """
 
     modelos_a_probar = [
@@ -502,17 +524,74 @@ Sé directo, profesional, motivador y usa formato Markdown limpio.
         "gemini-flash-latest"
     ]
 
+    raw_text = None
     for m in modelos_a_probar:
         try:
-            model = genai.GenerativeModel(m, generation_config={"temperature": 0.3})
+            model = genai.GenerativeModel(m, generation_config={"temperature": 0.2})
             resp = model.generate_content(prompt)
             if resp and resp.text:
-                return resp.text.strip()
+                raw_text = resp.text.strip()
+                break
         except Exception as e:
-            logger.warning(f"Error generando guía de estudio con {m}: {e}")
+            logger.warning(f"Error generando skill gaps study con {m}: {e}")
             continue
 
-    raise RuntimeError("No se pudo generar la guía de estudio debido a límites temporales de la API. Intenta en unos segundos.")
+    if not raw_text:
+        raise RuntimeError("No se pudo generar el análisis de brechas. Intenta de nuevo en unos segundos.")
+
+    # Parseo defensivo
+    texto_limpio = raw_text
+    if texto_limpio.startswith("```"):
+        lineas = texto_limpio.splitlines()
+        if len(lineas) >= 2:
+            texto_limpio = "\n".join(lineas[1:-1])
+
+    inicio_json = texto_limpio.find("[")
+    fin_json = texto_limpio.rfind("]")
+    if inicio_json != -1 and fin_json != -1:
+        texto_limpio = texto_limpio[inicio_json : fin_json + 1]
+
+    try:
+        items = json.loads(texto_limpio)
+        if not isinstance(items, list):
+            items = []
+    except Exception as err:
+        logger.error(f"Error decodificando JSON de skill gaps study: {err}\nTexto:\n{raw_text}")
+        items = []
+        for s in missing_skills:
+            items.append({
+                "skill": str(s),
+                "importance": "Required",
+                "context": f"Habilidad demandada para la posición de {position}.",
+                "category": "CI/CD & DevOps",
+                "key_concepts": "Repasar fundamentos esenciales, arquitectura y casos de uso en producción."
+            })
+
+    # Resolución en Python de plataformas reales mediante skill_resources.py (cero URLs alucinadas)
+    from skill_resources import recommend_resource, recommend_from_ms_learn_catalog
+
+    ms_keywords = [
+        "azure", "microsoft", ".net", "c#", "c sharp", "powershell",
+        "windows server", "active directory", "sql server", "power bi",
+        "office 365", "m365", "entra", "sharepoint"
+    ]
+
+    for item in items:
+        s_nombre = item.get("skill", "").strip()
+        s_cat = item.get("category", "CI/CD & DevOps")
+
+        resource = None
+        # Si es stack Microsoft/Azure, consultar primero la API oficial de MS Learn
+        if any(k in s_nombre.lower() for k in ms_keywords):
+            resource = recommend_from_ms_learn_catalog(s_nombre)
+
+        # Si no es Microsoft o la API devolvió None, usar la tabla curada / YouTube
+        if not resource:
+            resource = recommend_resource(s_nombre, s_cat)
+
+        item["resource"] = resource
+
+    return items
 
 
 def generate_interview_questions(
@@ -734,5 +813,58 @@ REGLAS DE FORMATO:
         "suggested_framework": "STAR (Situación, Tarea, Acción, Resultado)",
         "model_answer": "Enfócate en explicar primero el contexto, las acciones precisas tomadas y el impacto medible en el negocio o infraestructura."
     }
+
+
+def generar_sugerencia_curso(
+    skill: str,
+    position: str = "",
+    reason: str = ""
+) -> Tuple[str, str]:
+    """
+    Genera la sugerencia de curso gratuito con hipervínculo en formato Markdown según el perfil:
+    - Brechas Técnicas (IT, Cloud, Programación): FreeCodeCamp o Microsoft Learn.
+    - Brechas de Negocios (RRHH, Ventas, Management): Alison.
+    
+    Retorna una tupla: (texto_enlace, url_busqueda)
+    """
+    skill_clean = skill.strip()
+    skill_lower = skill_clean.lower()
+    pos_lower = (position or "").lower()
+    reason_lower = (reason or "").lower()
+    combined_text = f"{skill_lower} {pos_lower} {reason_lower}"
+    
+    query = urlparse.quote_plus(skill_clean.lower())
+
+    # 1. Brechas de Negocios (RRHH, Ventas, Management, Operaciones) -> Alison
+    keywords_negocios = [
+        "rrhh", "recursos humanos", "hr", "human resources", "talent", "reclutamiento",
+        "recruiting", "payroll", "nómina", "ventas", "sales", "comercial", "prospección",
+        "negociación", "crm", "marketing", "inbound", "seo", "sem", "management",
+        "gestión", "liderazgo", "leadership", "operaciones", "operations", "logística",
+        "supply chain", "finanzas", "finance", "contabilidad", "accounting", "administración",
+        "negocios", "business", "atención al cliente", "customer service", "compras", "procurement"
+    ]
+
+    for kw in keywords_negocios:
+        if kw in skill_lower:
+            return ("Busca cursos gratuitos en Alison", f"https://alison.com/courses?query={query}")
+
+    # Si la posición de la vacante es de RRHH, Ventas o Negocios
+    if any(kw in pos_lower for kw in ["sales", "ventas", "marketing", "comercial", "rrhh", "recursos humanos", "hr", "operaciones", "operations", "recruiter", "reclutador", "management"]):
+        return ("Busca cursos gratuitos en Alison", f"https://alison.com/courses?query={query}")
+
+    # 2. Brechas Técnicas (IT, Cloud, Programación)
+    # Microsoft Learn
+    keywords_ms = [
+        "azure", "microsoft", ".net", "c#", "c sharp", "powershell", "windows server",
+        "active directory", "sql server", "power bi", "office 365", "m365", "sharepoint"
+    ]
+    for kw in keywords_ms:
+        if kw in skill_lower:
+            return ("Busca cursos gratuitos en Microsoft Learn", f"https://learn.microsoft.com/en-us/training/search?terms={query}")
+
+    # FreeCodeCamp (por defecto para IT, Cloud y Programación)
+    return ("Busca cursos gratuitos en FreeCodeCamp", f"https://www.freecodecamp.org/news/search/?query={query}")
+
 
 

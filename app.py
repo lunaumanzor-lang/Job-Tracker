@@ -51,7 +51,8 @@ from ai_service import (
     generate_skill_gaps_study,
     generate_interview_questions,
     evaluate_interview_answer,
-    get_api_key
+    get_api_key,
+    generar_sugerencia_curso
 )
 
 # ------------------------------------------------------------------------------
@@ -467,8 +468,12 @@ if menu_opcion == "📊 Dashboard":
         response = supabase.table("applications").select("*").execute()
         datos_dashboard = response.data
     except Exception as e:
-        st.error(f"Error al cargar datos del Dashboard: {e}")
-        datos_dashboard = []
+        if "JWT expired" in str(e):
+            st.warning("⏱️ Tu sesión ha expirado por seguridad. Por favor, haz clic en 'Cerrar Sesión' y vuelve a ingresar.")
+            datos_dashboard = []
+        else:
+            st.error(f"Error al cargar datos del Dashboard: {e}")
+            datos_dashboard = []
 
     if not datos_dashboard:
         st.info("No hay datos suficientes para mostrar estadísticas.")
@@ -1182,10 +1187,18 @@ elif menu_opcion == "🤖 AI Job Analyzer":
             if missing_skills:
                 for s in missing_skills:
                     nombre = s.get("skill", "")
-                    importancia = s.get("importance", "Required")
-                    razon = s.get("reason", "")
+                    importancia = s.get("importance", "Required").strip("[]")
+                    razon = s.get("reason", "").strip()
+                    if razon and not razon.endswith((".", "!", "?")):
+                        razon += "."
                     razon_str = f" — _{razon}_" if razon else ""
-                    st.markdown(f"❌ **{nombre}** `[{importancia}]`{razon_str}")
+
+                    texto_curso, url_curso = generar_sugerencia_curso(
+                        skill=nombre,
+                        position=job_info.get("position", ""),
+                        reason=razon
+                    )
+                    st.markdown(f"❌ **{nombre}** `[{importancia}]`{razon_str} 💡 Sugerencia: [{texto_curso}]({url_curso})")
             else:
                 st.success("🎉 ¡Excelente! No se detectaron tecnologías o requisitos faltantes para esta vacante.")
 
@@ -1349,8 +1362,12 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
         response = supabase.table("applications").select("*").order("id", desc=True).execute()
         todas_las_apps = response.data
     except Exception as e:
-        st.error(f"Error al leer la base de datos en la nube: {e}")
-        todas_las_apps = []
+        if "JWT expired" in str(e):
+            st.warning("⏱️ Tu sesión ha expirado por seguridad. Por favor, haz clic en 'Cerrar Sesión' y vuelve a ingresar.")
+            todas_las_apps = []
+        else:
+            st.error(f"Error al leer la base de datos en la nube: {e}")
+            todas_las_apps = []
 
     if not todas_las_apps:
         st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera.")
@@ -1645,7 +1662,7 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                     c_session = st.session_state["coach_session"]
 
                     # Generación inicial con IA si aún no existen en la sesión
-                    if not c_session.get("questions") or not c_session.get("study_guide"):
+                    if not c_session.get("questions") or c_session.get("study_guide") is None:
                         with st.spinner("🧠 Generando plan de entrenamiento, análisis de brechas y preguntas de entrevista con Gemini..."):
                             app_skills = get_skills_by_application(app_actual["id"])
                             user_skills = get_all_user_skills()
@@ -1672,7 +1689,7 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                                 st.error(f"❌ Error al inicializar el Interview Coach: {e}")
 
                     # Renderizado de las 3 secciones del Coach
-                    if c_session.get("questions") and c_session.get("study_guide"):
+                    if c_session.get("questions") and (c_session.get("study_guide") is not None):
                         tab_gaps, tab_bank, tab_sim = st.tabs([
                             "📚 Skill Gaps Study (Guía Rápida)",
                             f"❓ Banco de Preguntas ({len(c_session['questions'])})",
@@ -1682,8 +1699,43 @@ elif menu_opcion == "📋 Ver y Gestionar Aplicaciones":
                         # PESTAÑA 1: GUÍA DE ESTUDIO DE BRECHAS
                         with tab_gaps:
                             st.markdown("### 📚 Guía de Estudio de Brechas Técnicas")
-                            st.caption("Conceptos esenciales, vocabulario indispensable y cómo defender cada tecnología faltante en la entrevista.")
-                            st.markdown(c_session["study_guide"])
+                            st.caption("Conceptos esenciales, vocabulario indispensable y recursos oficiales recomendados para cada habilidad faltante.")
+
+                            gaps_list = c_session.get("study_guide", [])
+                            if isinstance(gaps_list, list) and gaps_list:
+                                for g in gaps_list:
+                                    s_name = g.get("skill", "")
+                                    s_imp = g.get("importance", "Required").strip("[]")
+                                    s_ctx = g.get("context", "")
+                                    s_cat = g.get("category", "")
+                                    s_tips = g.get("key_concepts", "")
+                                    res = g.get("resource") or {}
+
+                                    with st.container(border=True):
+                                        col_g1, col_g2 = st.columns([3, 1])
+                                        with col_g1:
+                                            st.markdown(f"#### ❌ **{s_name}** `[{s_imp}]`")
+                                            st.caption(f"Categoría: `{s_cat}`")
+                                        with col_g2:
+                                            if res.get("source") == "ms_learn_catalog_api":
+                                                st.caption("☁️ `MS Learn Oficial`")
+                                            elif res.get("source") == "curated":
+                                                st.caption("🛡️ `Plataforma Curada`")
+                                            else:
+                                                st.caption("🔍 `Búsqueda Externa`")
+
+                                        if s_ctx:
+                                            st.markdown(f"**📌 Relevancia en el puesto:** {s_ctx}")
+                                        if s_tips:
+                                            st.markdown(f"**🎯 Conceptos clave para la entrevista:** {s_tips}")
+
+                                        if res and res.get("url"):
+                                            p_label = res.get("title") or res.get("platform", "Plataforma de estudio")
+                                            st.markdown(f"💡 **Sugerencia de estudio:** [{p_label}]({res['url']})")
+                            elif isinstance(gaps_list, str) and gaps_list.strip():
+                                st.markdown(gaps_list)
+                            else:
+                                st.success("🎉 ¡Excelente! No se detectaron brechas técnicas para esta postulación.")
 
                         # PESTAÑA 2: BANCO DE PREGUNTAS
                         with tab_bank:
