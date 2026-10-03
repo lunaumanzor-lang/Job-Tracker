@@ -271,7 +271,7 @@ def analyze_job_description(
     texto_skills_perfil = "\n".join(skills_formateadas) if skills_formateadas else "No hay habilidades registradas en el perfil aún."
 
     prompt = f"""
-Eres un reclutador técnico senior y experto en evaluación de talento tech.
+Eres un reclutador técnico senior y experto en evaluación de talento tech y perfiles corporativos.
 Tu tarea es analizar la siguiente descripción de vacante laboral (Job Description) y compararla minuciosamente contra el perfil de habilidades del candidato (Master Skill Profile).
 
 PERFIL DE HABILIDADES DEL CANDIDATO (Master Skill Profile):
@@ -291,14 +291,18 @@ CRITERIOS DE CLASIFICACIÓN (ESTRICTOS):
 
 EXTRACCIÓN DE INFORMACIÓN DEL PUESTO:
 - company: Nombre de la empresa empleadora (si no se especifica claramente, escribe "No especificada").
-- position: Título del puesto / rol (ej. "Senior DevOps Engineer", "Site Reliability Engineer", "Cloud Architect").
+- position: Título del puesto / rol (ej. "Senior DevOps Engineer", "Site Reliability Engineer", "Cloud Architect", "Product Manager").
 - work_mode: Clasifica OBLIGATORIAMENTE en uno de: "Remote", "Hybrid", "On-site" o "TBD" (si no está claro).
 - location: Ubicación geográfica o "Remote".
 - salary: Rango o cifra salarial si se menciona explícitamente (ej. "$90,000 - $110,000 USD"), o cadena vacía "" si no se menciona.
 
+CATEGORÍAS VÁLIDAS PARA CADA MISSING SKILL (OBLIGATORIAMENTE UNA DE ESTAS EXACTAS):
+Operating Systems, Cloud & Virtualization, CI/CD & DevOps, Databases, Security, Identity & Access Management, Programming & Scripting, Monitoring, Collaboration & ITSM, Marketing, Sales, Customer Service, Human Resources, Finance & Accounting, Project Management, Business Strategy & Management, Business/Soft Skills.
+
 REGLAS DE RESPUESTA:
 - Responde ÚNICAMENTE con un objeto JSON válido.
-- NO agregues explicaciones fuera del bloque JSON.
+- NO agregues explicaciones ni markdown fuera del bloque JSON.
+- NO generes URLs ni inventes links de cursos; solo asigna el nombre y la categoría correcta.
 - Sigue exactamente esta estructura:
 
 {{
@@ -327,6 +331,7 @@ REGLAS DE RESPUESTA:
     "missing_skills": [
       {{
         "skill": "Nombre de la tecnología faltante",
+        "category": "Una de las categorías exactas mencionadas arriba",
         "importance": "Required o Nice-to-have",
         "reason": "Rol en la vacante"
       }}
@@ -419,28 +424,53 @@ REGLAS DE RESPUESTA:
     if not isinstance(skill_matching, dict):
         skill_matching = {}
 
-    def normalizar_items(lista, default_key, default_val):
+    from skill_resources import recommend_resource, recommend_from_ms_learn_catalog
+
+    ms_keywords = [
+        "azure", "microsoft", ".net", "c#", "c sharp", "powershell",
+        "windows server", "active directory", "sql server", "power bi",
+        "office 365", "m365", "sharepoint"
+    ]
+
+    def normalizar_items(lista, default_key, default_val, is_missing=False):
         items_limpios = []
         if isinstance(lista, list):
             for item in lista:
                 if isinstance(item, dict) and item.get("skill"):
-                    items_limpios.append({
-                        "skill": str(item["skill"]).strip(),
+                    s_nom = str(item["skill"]).strip()
+                    elem = {
+                        "skill": s_nom,
                         default_key: str(item.get(default_key, default_val)).strip(),
                         "reason": str(item.get("reason", "")).strip()
-                    })
+                    }
+                    if is_missing:
+                        s_cat = str(item.get("category", "CI/CD & DevOps")).strip()
+                        elem["category"] = s_cat
+                        # Resolver recurso en Python usando skill_resources.py
+                        rec = None
+                        if any(k in s_nom.lower() for k in ms_keywords):
+                            rec = recommend_from_ms_learn_catalog(s_nom)
+                        if not rec:
+                            rec = recommend_resource(s_nom, s_cat)
+                        elem["resource"] = rec
+                    items_limpios.append(elem)
                 elif isinstance(item, str) and item.strip():
-                    items_limpios.append({
-                        "skill": item.strip(),
+                    s_nom = item.strip()
+                    elem = {
+                        "skill": s_nom,
                         default_key: default_val,
                         "reason": ""
-                    })
+                    }
+                    if is_missing:
+                        elem["category"] = "CI/CD & DevOps"
+                        elem["resource"] = recommend_resource(s_nom, "CI/CD & DevOps")
+                    items_limpios.append(elem)
         return items_limpios
 
     data["skill_matching"] = {
         "strong_matches": normalizar_items(skill_matching.get("strong_matches"), "proficiency", "Intermediate"),
         "partial_matches": normalizar_items(skill_matching.get("partial_matches"), "proficiency", "Beginner"),
-        "missing_skills": normalizar_items(skill_matching.get("missing_skills"), "importance", "Required")
+        "missing_skills": normalizar_items(skill_matching.get("missing_skills"), "importance", "Required", is_missing=True)
     }
 
     return data

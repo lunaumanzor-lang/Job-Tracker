@@ -1193,12 +1193,18 @@ elif menu_opcion == "🤖 AI Job Analyzer":
                         razon += "."
                     razon_str = f" — _{razon}_" if razon else ""
 
-                    texto_curso, url_curso = generar_sugerencia_curso(
-                        skill=nombre,
-                        position=job_info.get("position", ""),
-                        reason=razon
-                    )
-                    st.markdown(f"❌ **{nombre}** `[{importancia}]`{razon_str} 💡 Sugerencia: [{texto_curso}]({url_curso})")
+                    res = s.get("resource")
+                    if not res:
+                        from skill_resources import recommend_resource, recommend_from_ms_learn_catalog
+                        ms_kw = ["azure", "microsoft", ".net", "c#", "powershell", "windows server", "active directory", "sql server", "power bi", "office 365", "m365"]
+                        if any(k in nombre.lower() for k in ms_kw):
+                            res = recommend_from_ms_learn_catalog(nombre)
+                        if not res:
+                            res = recommend_resource(nombre, s.get("category", "CI/CD & DevOps"))
+
+                    p_name = res.get("title") or res.get("platform", "Plataforma de estudio")
+                    p_url = res.get("url", "#")
+                    st.markdown(f"❌ **{nombre}** `[{importancia}]`{razon_str}\n\n&nbsp;&nbsp;&nbsp;&nbsp;📚 **Aprende gratis en:** [{p_name}]({p_url})")
             else:
                 st.success("🎉 ¡Excelente! No se detectaron tecnologías o requisitos faltantes para esta vacante.")
 

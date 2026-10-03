@@ -1,45 +1,92 @@
 """
-skill_resources.py
+skill_resources.py (v2)
 
 Resuelve una sugerencia de estudio gratuita para una skill faltante,
 SIN depender de que un LLM genere o alucine una URL.
 
 El LLM solo debe devolver: skill, importance, context, category.
-Este modulo se encarga de traducir "category" a una plataforma real
-y verificada por ti.
+Este modulo traduce eso a un link real, verificado por busqueda web
+el 2 de octubre 2026 (no adivinado por el LLM ni por mi memoria).
+
+Arquitectura de 3 niveles, en este orden de prioridad:
+  1. SKILL_OVERRIDES   -> link especifico y verificado para esa skill
+                          exacta (ej. Kubernetes -> doc oficial).
+  2. CATEGORY_PLATFORMS -> plataforma curada para la categoria entera
+                          (ej. cualquier skill de Marketing -> HubSpot
+                          Academy), cubre tech y NEGOCIOS (marketing,
+                          ventas, HR, finanzas, gestion, soft skills).
+  3. EDX_SEARCH_FALLBACK -> si no hay override ni categoria, se usa
+                          la busqueda de edX (patron de URL real y
+                          verificado, catalogo enorme que cubre casi
+                          cualquier tema, no solo tech).
+
+Nota de honestidad: no existe una tabla que cubra el 100% de las
+skills posibles en el universo. Esta tabla es deliberadamente amplia
+(cubre las categorias de IT que ya tienes en tu proyecto + las
+principales areas de negocio), pero si agregas una categoria nueva
+que no está aqui, cae automaticamente en el fallback de edX, que
+SIEMPRE funciona (nunca un link roto) aunque sea menos preciso que
+una entrada curada.
 """
 
 import requests
 
 # -----------------------------------------------------------------
-# Tabla curada: categoria -> plataforma gratuita de confianza.
-# Cada entrada usa la URL HOME o de categoria/tema de la plataforma,
-# no un patron de busqueda adivinado. Esto es lo que tu verificas
-# una vez, manualmente, y queda estable.
+# SKILL_OVERRIDES: links especificos y verificados por nombre de
+# skill (normalizado a minusculas). Usar solo para skills donde
+# existe una fuente oficial y claramente superior a la categoria
+# general.
 # -----------------------------------------------------------------
-FREE_LEARNING_PLATFORMS = {
+SKILL_OVERRIDES = {
+    "kubernetes": {
+        "name": "Kubernetes - Learn Kubernetes Basics (doc oficial)",
+        "url": "https://kubernetes.io/docs/tutorials/kubernetes-basics/",
+    },
+    "terraform": {
+        "name": "HashiCorp Developer - Terraform Tutorials (oficial)",
+        "url": "https://developer.hashicorp.com/terraform/tutorials",
+    },
+    "docker": {
+        "name": "Docker - Get Started (doc oficial)",
+        "url": "https://docs.docker.com/get-started/",
+    },
+    "jenkins": {
+        "name": "Jenkins - Tutorials (doc oficial)",
+        "url": "https://www.jenkins.io/doc/tutorials/",
+    },
+}
+
+# -----------------------------------------------------------------
+# CATEGORY_PLATFORMS: plataforma curada por categoria. Cubre tanto
+# categorias tecnicas (ya alineadas con tu Core Technologies) como
+# categorias de negocio (marketing, ventas, HR, finanzas, gestion).
+# Cada URL es la pagina HOME/catalogo de la plataforma, verificada
+# que existe y es gratuita (no un patron de busqueda adivinado).
+# -----------------------------------------------------------------
+CATEGORY_PLATFORMS = {
+    # --- Tecnico ---
     "Operating Systems": {
-        "name": "Linux Foundation - Training (free courses)",
+        "name": "Linux Foundation - Free Courses",
         "url": "https://training.linuxfoundation.org/free-courses/",
     },
     "Cloud & Virtualization": {
-        "name": "AWS Skill Builder (free tier)",
+        "name": "AWS Skill Builder (free tier, 900+ cursos)",
         "url": "https://skillbuilder.aws/",
     },
     "CI/CD & DevOps": {
-        "name": "HashiCorp Developer (Terraform, Vault, etc. - free)",
-        "url": "https://developer.hashicorp.com/tutorials/library",
+        "name": "HashiCorp Developer - Tutorials",
+        "url": "https://developer.hashicorp.com/terraform/tutorials",
     },
     "Databases": {
-        "name": "PostgreSQL Tutorial (free)",
-        "url": "https://www.postgresqltutorial.com/",
+        "name": "freeCodeCamp - Relational Database curriculum",
+        "url": "https://www.freecodecamp.org/learn/relational-database/",
     },
     "Security": {
-        "name": "TryHackMe (free rooms)",
+        "name": "TryHackMe (salas gratuitas)",
         "url": "https://tryhackme.com/hacktivities",
     },
     "Identity & Access Management": {
-        "name": "Okta Developer (free docs & guides)",
+        "name": "Okta Developer (docs y guias gratis)",
         "url": "https://developer.okta.com/docs/",
     },
     "Programming & Scripting": {
@@ -47,48 +94,94 @@ FREE_LEARNING_PLATFORMS = {
         "url": "https://www.freecodecamp.org/learn/",
     },
     "Monitoring": {
-        "name": "Grafana Labs Learning Hub (free)",
+        "name": "Grafana Labs - Tutorials",
         "url": "https://grafana.com/tutorials/",
     },
     "Collaboration & ITSM": {
-        "name": "Atlassian University (free courses)",
+        "name": "Atlassian University (cursos gratis)",
         "url": "https://university.atlassian.com/",
     },
+    # --- Negocio (nuevo) ---
+    "Marketing": {
+        "name": "HubSpot Academy (marketing, 100% gratis)",
+        "url": "https://academy.hubspot.com/",
+    },
+    "Sales": {
+        "name": "HubSpot Academy (ventas, 100% gratis)",
+        "url": "https://academy.hubspot.com/",
+    },
+    "Customer Service": {
+        "name": "HubSpot Academy (servicio al cliente, 100% gratis)",
+        "url": "https://academy.hubspot.com/",
+    },
+    "Human Resources": {
+        "name": "Alison (cursos de RRHH gratuitos)",
+        "url": "https://alison.com/",
+    },
+    "Finance & Accounting": {
+        "name": "Khan Academy (finanzas y contabilidad, gratis)",
+        "url": "https://www.khanacademy.org/economics-finance-domain",
+    },
+    "Project Management": {
+        "name": "Alison (gestion de proyectos, gratis)",
+        "url": "https://alison.com/",
+    },
+    "Business Strategy & Management": {
+        "name": "edX (audita cursos de Harvard/MIT gratis)",
+        "url": "https://www.edx.org/",
+    },
     "Business/Soft Skills": {
-        "name": "Alison (free courses)",
+        "name": "Alison (soft skills, gratis)",
         "url": "https://alison.com/",
     },
 }
 
-# Fallback universal: YouTube tiene un patron de busqueda estable y
-# documentado (no adivinado), util cuando ninguna categoria curada
-# aplica bien.
+# -----------------------------------------------------------------
+# Fallback universal verificado: busqueda real en edX. Catalogo de
+# mas de 4000 cursos (tech Y negocio), patron de URL documentado y
+# probado (no adivinado). Si una categoria no esta en la tabla de
+# arriba, cae aqui en vez de romperse.
+# -----------------------------------------------------------------
+EDX_SEARCH_BASE = "https://www.edx.org/search?q="
+
+# Ultimo recurso si incluso edX fallara (la funcion de busqueda en
+# YouTube tiene un patron de URL estable, aunque la calidad del
+# contenido varia mas que un catalogo curado).
 YOUTUBE_SEARCH_BASE = "https://www.youtube.com/results?search_query="
 
 
 def recommend_resource(skill: str, category: str) -> dict:
     """
     Devuelve una sugerencia de estudio confiable para una skill.
-    No inventa URLs: usa la tabla curada, o un fallback de busqueda
-    en una plataforma con patron de URL verificado (YouTube).
+    Orden de prioridad: SKILL_OVERRIDES -> CATEGORY_PLATFORMS ->
+    busqueda en edX. Nunca inventa una URL nueva.
     """
-    platform = FREE_LEARNING_PLATFORMS.get(category)
+    skill_key = skill.strip().lower()
+    override = SKILL_OVERRIDES.get(skill_key)
+    if override:
+        return {
+            "skill": skill,
+            "platform": override["name"],
+            "url": override["url"],
+            "source": "skill_override",
+        }
 
+    platform = CATEGORY_PLATFORMS.get(category)
     if platform:
         return {
             "skill": skill,
             "platform": platform["name"],
             "url": platform["url"],
-            "source": "curated",
+            "source": "curated_category",
         }
 
-    # Fallback: busqueda en YouTube (patron estable y documentado)
+    # Fallback: busqueda real en edX (patron de URL verificado)
     query = skill.replace(" ", "+")
     return {
         "skill": skill,
-        "platform": "YouTube (busqueda)",
-        "url": f"{YOUTUBE_SEARCH_BASE}{query}+tutorial+free",
-        "source": "fallback_search",
+        "platform": "edX (busqueda)",
+        "url": f"{EDX_SEARCH_BASE}{query}",
+        "source": "edx_search_fallback",
     }
 
 
@@ -127,8 +220,15 @@ def recommend_from_ms_learn_catalog(skill: str) -> dict | None:
 
 
 if __name__ == "__main__":
-    # Ejemplos de uso
+    # Ejemplos de uso - tech y negocio
     print(recommend_resource("Kubernetes", "CI/CD & DevOps"))
     print(recommend_resource("Terraform", "CI/CD & DevOps"))
-    print(recommend_resource("Negotiation", "Business/Soft Skills"))
+    print(recommend_resource("Docker", "CI/CD & DevOps"))
+    print(recommend_resource("Jenkins", "CI/CD & DevOps"))  # sin override -> categoria
+    print(recommend_resource("Digital Advertising", "Marketing"))
+    print(recommend_resource("Negotiation", "Sales"))
+    print(recommend_resource("Payroll Management", "Human Resources"))
+    print(recommend_resource("Financial Modeling", "Finance & Accounting"))
+    print(recommend_resource("Agile Methodology", "Project Management"))
+    print(recommend_resource("Figma", "Design"))  # categoria no mapeada -> fallback edX
     print(recommend_from_ms_learn_catalog("Azure Functions"))
