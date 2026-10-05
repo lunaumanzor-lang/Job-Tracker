@@ -2736,13 +2736,16 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                             with st.container(border=True):
                                 pending_prop_key = f"cv_pending_improvement_{b_id}"
                                 pending_mode_key = f"cv_pending_mode_{b_id}"
+                                pending_lang_key = f"cv_pending_lang_{b_id}"
 
                                 if pending_prop_key in st.session_state:
                                     st.caption(f"📌 {t('cv_current_label')}")
                                     st.write(b["current_text"])
 
                                     active_mode = t("cv_mode_tailored") if st.session_state.get(pending_mode_key) == "tailored" else t("cv_mode_general")
-                                    st.success(f"**{t('cv_improvement_pending', mode=active_mode)}**\n\n{st.session_state[pending_prop_key]}")
+                                    pending_lang = st.session_state.get(pending_lang_key, "es")
+                                    lang_badge = "🇪🇸 Español" if pending_lang == "es" else "🇺🇸 English"
+                                    st.success(f"**{t('cv_improvement_pending', mode=active_mode)} ({lang_badge})**\n\n{st.session_state[pending_prop_key]}")
 
                                     c_acc, c_disc = st.columns(2)
                                     with c_acc:
@@ -2752,6 +2755,8 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                                             del st.session_state[pending_prop_key]
                                             if pending_mode_key in st.session_state:
                                                 del st.session_state[pending_mode_key]
+                                            if pending_lang_key in st.session_state:
+                                                del st.session_state[pending_lang_key]
                                             st.toast(t("cv_bullet_saved_toast"), icon="💾")
                                             st.rerun()
                                     with c_disc:
@@ -2760,6 +2765,8 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                                             del st.session_state[pending_prop_key]
                                             if pending_mode_key in st.session_state:
                                                 del st.session_state[pending_mode_key]
+                                            if pending_lang_key in st.session_state:
+                                                del st.session_state[pending_lang_key]
                                             st.info(t("cv_improvement_discarded"))
                                             st.rerun()
                                 else:
@@ -2772,25 +2779,38 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                                         label_visibility="collapsed"
                                     )
 
-                                    b_c1, b_c2, b_c3 = st.columns([3, 1, 1])
+                                    b_c1, b_c2, b_c3, b_c4 = st.columns([2.2, 2.2, 0.8, 0.8])
                                     with b_c1:
-                                        if st.button(f"⚡ {t('cv_btn_improve_ai')}", key=f"btn_ai_improve_{b_id}"):
-                                            with st.spinner("🤖 Generando propuesta de redacción..."):
+                                        if st.button(t("cv_btn_improve_es"), key=f"btn_ai_es_{b_id}", help="Reescribir con IA en Español"):
+                                            with st.spinner(f"🤖 {t('cv_spinner_improve_es')}"):
                                                 improved = rewrite_resume_bullet(
                                                     current_bullet=edited_text,
-                                                    job_description=job_description
+                                                    job_description=job_description,
+                                                    language="es"
                                                 )
-                                                # Guardamos la propuesta en memoria (session_state) antes de persistir
                                                 st.session_state[pending_prop_key] = improved
                                                 st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
+                                                st.session_state[pending_lang_key] = "es"
                                                 st.rerun()
                                     with b_c2:
+                                        if st.button(t("cv_btn_improve_en"), key=f"btn_ai_en_{b_id}", help="Rewrite with AI in English"):
+                                            with st.spinner(f"🤖 {t('cv_spinner_improve_en')}"):
+                                                improved = rewrite_resume_bullet(
+                                                    current_bullet=edited_text,
+                                                    job_description=job_description,
+                                                    language="en"
+                                                )
+                                                st.session_state[pending_prop_key] = improved
+                                                st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
+                                                st.session_state[pending_lang_key] = "en"
+                                                st.rerun()
+                                    with b_c3:
                                         if edited_text != b["current_text"]:
                                             if st.button("💾", key=f"btn_save_txt_{b_id}", help=t("btn_save")):
                                                 update_resume_bullet(b_id, edited_text)
                                                 st.toast(t("cv_bullet_saved_toast"), icon="💾")
                                                 st.rerun()
-                                    with b_c3:
+                                    with b_c4:
                                         if st.button("🗑️", key=f"btn_del_b_{b_id}", help=t("btn_delete")):
                                             delete_resume_bullet(b_id)
                                             st.toast(t("cv_bullet_deleted_toast"), icon="🗑️")

@@ -1230,21 +1230,22 @@ def generar_sugerencia_curso(
 def rewrite_resume_bullet(
     current_bullet: str,
     job_description: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    language: str = "es"
 ) -> str:
     """
-    Reescribe un bullet de experiencia laboral usando un enfoque híbrido:
+    Reescribe un bullet de experiencia laboral usando un enfoque híbrido y bilingüe (ES / EN):
     
     1. Si job_description está VACÍO (mejora general):
        Aplica la Fórmula de Impacto de Google:
        Acción (Qué hiciste) + Contexto/Herramientas (Cómo lo hiciste) + Métricas (Impacto medible).
        
-    2. Si job_description TIENE TEXTO (mejora específica):
+    2. Si job_description TIENE TEXTO (mejora específica / tailored):
        Reescribe el bullet destacando palabras clave relevantes y requerimientos
        de la vacante suministrada.
        
-    IMPORTANTE: Esta función no devuelve Match Score ni listados de keywords.
-    Se enfoca exclusivamente en la reescritura de alta calidad del bullet individual.
+    3. Soporta idioma de salida mediante `language` ("es" o "en"):
+       Permite generar redacción profesional nativa en inglés o español.
     """
     bullet_clean = (current_bullet or "").strip()
     if not bullet_clean:
@@ -1252,94 +1253,117 @@ def rewrite_resume_bullet(
 
     has_jd = bool(job_description and job_description.strip())
     jd_clean = job_description.strip() if has_jd else ""
+    is_en = (language.lower() == "en")
 
-    # --------------------------------------------------------------------------
-    # TODO (Fase 5a / Integración Real con LLM):
-    # Aquí se conecta la llamada real con la API de Gemini utilizando:
-    #
-    # active_key = api_key or get_api_key()
-    # if active_key:
-    #     try:
-    #         model = get_generative_model(active_key)
-    #         if not has_jd:
-    #             prompt = f'''Actúa como un editor senior de CVs y experto técnico en contratación.
-    # Reescribe el siguiente bullet de experiencia laboral aplicando estrictamente la fórmula de Google:
-    # "Logré [X], medido por [Y], haciendo [Z]".
-    # - Inicia con un verbo de acción fuerte.
-    # - Explica el método o tecnologías utilizadas.
-    # - Agrega o proyecta una métrica de impacto realista (porcentajes, tiempos, SLA, disponibilidad).
-    # - Devuelve ÚNICAMENTE el texto del nuevo bullet mejorado, sin explicaciones ni viñetas adicionales.
-    #
-    # Bullet actual:
-    # "{bullet_clean}"'''
-    #         else:
-    #             prompt = f'''Actúa como un reclutador técnico y especialista en optimización de CVs para ATS.
-    # Reescribe el siguiente bullet de experiencia profesional para alinearlo estratégicamente a la vacante objetivo.
-    # - Destaca palabras clave y tecnologías relevantes presentes en la descripción del puesto.
-    # - Demuestra impacto tangible y responsabilidad profesional.
-    # - Devuelve ÚNICAMENTE el texto del nuevo bullet reescrito, sin notas ni prefijos.
-    #
-    # Vacante objetivo:
-    # {jd_clean[:1500]}
-    #
-    # Bullet actual:
-    # "{bullet_clean}"'''
-    #
-    #         response = model.generate_content(prompt)
-    #         if response and response.text:
-    #             return response.text.strip().lstrip("•-* ").strip()
-    #     except Exception as e:
-    #         logger.warning(f"Error en llamada real al LLM para reescribir bullet: {e}")
-    # --------------------------------------------------------------------------
+    if is_en:
+        if not has_jd:
+            prompt = f"""You are a Principal Technical Recruiter and Executive Resume Writer specializing in ATS optimization.
+Rewrite the following resume bullet point in ENGLISH applying Google's formula:
+"Accomplished [X] as measured by [Y], by doing [Z]"
 
-    # Simulación de alta calidad para la Fase 5.6a (Permite probar de inmediato sin costo ni latencia):
-    if not has_jd:
-        # Enfoque A: Fórmula de Google (X + Y + Z)
-        b_lower = bullet_clean.lower()
-        if any(w in b_lower for w in ["administr", "servidor", "unix", "linux", "red hat", "solaris"]):
-            return (
-                "Lideré la administración y soporte de infraestructura crítica de más de 200 servidores Unix/Linux (Red Hat y Solaris), "
-                "manteniendo una disponibilidad operativa del 99.98% para plataformas bancarias de alta transaccionalidad."
-            )
-        elif any(w in b_lower for w in ["automatiz", "bash", "python", "script"]):
-            return (
-                "Diseñé e implementé más de 30 scripts automatizados en Bash y Python para tareas de mantenimiento y parches de seguridad, "
-                "reduciendo las horas hombre de esfuerzo operativo en un 65%."
-            )
-        elif any(w in b_lower for w in ["incident", "sla", "itil", "soporte", "nivel 3"]):
-            return (
-                "Resolví más de 120 incidentes críticos de producción Nivel 3 bajo lineamientos ITIL, "
-                "disminuyendo el Tiempo Medio de Resolución (MTTR) en un 40% y cumpliendo con SLAs por encima del 99.9%."
-            )
-        elif any(w in b_lower for w in ["monitoreo", "rendimiento", "cpu", "memoria"]):
-            return (
-                "Implementé esquemas de monitoreo proactivo del rendimiento del sistema operativo, "
-                "optimizando la utilización de recursos de CPU y memoria en un 25% y previniendo caídas no planificadas."
-            )
-        elif any(w in b_lower for w in ["docker", "contenedor", "apache", "nginx"]):
-            return (
-                "Orquesté la contenedorización y despliegue de servicios web Apache y Nginx con Docker, "
-                "acelerando los tiempos de liberación en un 50% y garantizando alta disponibilidad en entornos productivos."
-            )
+STRICT INSTRUCTIONS:
+- The output MUST BE 100% IN ENGLISH.
+- Start with a powerful action verb in the past tense (e.g., "Architected", "Engineered", "Spearheaded", "Streamlined", "Automated", "Delivered").
+- Explicitly mention modern tools, technologies, and technical methods.
+- Include realistic, quantifiable metrics (percentages, latency, SLA, uptime, scale).
+- Output ONLY the single improved bullet point text.
+- Do NOT include bullet symbols (•, -), quotes, or introductory commentary.
+
+Current bullet:
+"{bullet_clean}"
+"""
         else:
-            return (
-                f"Lideré y optimicé {bullet_clean.rstrip('.')}, aplicando mejores prácticas de ingeniería de sistemas y "
-                f"aumentando la eficiencia operativa del proceso en un 35% con cero fallas críticas."
-            )
+            prompt = f"""You are a Principal Technical Recruiter and Executive Resume Writer specializing in ATS optimization.
+Rewrite the following resume bullet point in ENGLISH strategically aligned with the target job vacancy.
+
+TARGET VACANCY / JOB DESCRIPTION:
+\"\"\"
+{jd_clean[:1500]}
+\"\"\"
+
+STRICT INSTRUCTIONS:
+- The output MUST BE 100% IN ENGLISH.
+- Strategically highlight relevant technical keywords and competencies demanded in the job description.
+- Start with a strong action verb in the past tense.
+- Demonstrate tangible business or infrastructure impact with metrics.
+- Output ONLY the single improved bullet point text.
+- Do NOT include bullet symbols (•, -), quotes, or introductory commentary.
+
+Current bullet:
+"{bullet_clean}"
+"""
     else:
-        # Enfoque B: Adaptación Específica a la Vacante Pegada
-        jd_lower = jd_clean.lower()
-        keywords_encontradas = []
-        for kw in ["cloud", "aws", "azure", "ci/cd", "devops", "kubernetes", "ansible", "terraform", "seguridad", "linux", "python", "bash", "sla"]:
-            if kw in jd_lower:
-                keywords_encontradas.append(kw.upper() if kw in ["aws", "azure", "ci/cd", "sla"] else kw.capitalize())
+        if not has_jd:
+            prompt = f"""Eres un reclutador técnico senior y experto en redacción de CVs de alto impacto para perfiles de tecnología.
+Reescribe la siguiente viñeta / bullet de experiencia laboral en ESPAÑOL aplicando estrictamente la fórmula de Google:
+"Logré [X], medido por [Y], haciendo [Z]"
 
-        kw_highlight = ", ".join(keywords_encontradas[:3]) if keywords_encontradas else "los requisitos prioritarios de la posición"
+REGLAS ESTRICTAS:
+- La salida DEBE ESTAR 100% EN ESPAÑOL.
+- Inicia con un verbo de acción contundente en primera persona del pasado (ej. "Lideré", "Automaticé", "Diseñé", "Optimizé", "Implementé", "Desplegué").
+- Explica las herramientas, tecnologías y metodología empleadas.
+- Agrega o proyecta una métrica de impacto realista (porcentajes, tiempos, SLA, disponibilidad).
+- Devuelve ÚNICAMENTE el texto del nuevo bullet mejorado, sin explicaciones, comillas ni viñetas adicionales.
 
-        return (
-            f"Ejecuté y modernicé {bullet_clean.rstrip('.').lower()}, alineado estratégicamente a {kw_highlight}, "
-            f"maximizando la resiliencia operativa y garantizando el cumplimiento de estándares corporativos de alta demanda."
-        )
+Bullet actual:
+"{bullet_clean}"
+"""
+        else:
+            prompt = f"""Eres un reclutador técnico senior y especialista en optimización de CVs para ATS.
+Reescribe la siguiente viñeta / bullet de experiencia profesional en ESPAÑOL para alinearlo estratégicamente a la vacante objetivo.
+
+VACANTE OBJETIVO:
+\"\"\"
+{jd_clean[:1500]}
+\"\"\"
+
+REGLAS ESTRICTAS:
+- La salida DEBE ESTAR 100% EN ESPAÑOL.
+- Destaca palabras clave y tecnologías relevantes presentes en la descripción del puesto.
+- Inicia con un verbo de acción fuerte en pasado.
+- Demuestra impacto tangible, responsabilidad profesional y métricas.
+- Devuelve ÚNICAMENTE el texto del nuevo bullet reescrito en ESPAÑOL, sin notas, comillas ni viñetas adicionales.
+
+Bullet actual:
+"{bullet_clean}"
+"""
+
+    # Llamada real con cascada de modelos Gemini
+    active_key = api_key or get_api_key()
+    if active_key:
+        genai.configure(api_key=active_key)
+        modelos_a_probar = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
+            "gemini-3.5-flash",
+            "gemini-flash-latest"
+        ]
+        for m in modelos_a_probar:
+            try:
+                model = genai.GenerativeModel(m, generation_config={"temperature": 0.25})
+                resp = model.generate_content(prompt)
+                if resp and resp.text:
+                    texto = resp.text.strip().lstrip("•-* ").strip().strip('"').strip("'")
+                    if texto:
+                        return texto
+            except Exception as e:
+                logger.warning(f"Error reescribiendo bullet con {m}: {e}")
+                continue
+
+    # Fallback determinista de respaldo si no hay API Key o falla temporalmente la conexión
+    if is_en:
+        if not has_jd:
+            return f"Spearheaded and streamlined {bullet_clean.rstrip('.')}, driving operational efficiency and boosting system performance by 35% with zero critical downtime."
+        else:
+            return f"Engineered and modernized {bullet_clean.rstrip('.')}, directly aligning with key vacancy requirements and achieving a 40% improvement in operational throughput."
+    else:
+        if not has_jd:
+            return f"Lideré y optimicé {bullet_clean.rstrip('.')}, aplicando mejores prácticas de ingeniería de sistemas y aumentando la eficiencia operativa en un 35% con cero fallas críticas."
+        else:
+            return f"Ejecuté y modernicé {bullet_clean.rstrip('.')}, alineado estratégicamente a los requisitos prioritarios de la posición y maximizando la resiliencia operativa."
+
 
 
 
