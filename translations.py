@@ -418,6 +418,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # --- 5.6a CV Builder & AI Optimizer ---
         "cv_builder_title": "📄 CV Builder & AI Optimizer",
         "cv_builder_caption": "Reescribe y optimiza los puntos clave de tu experiencia profesional con Inteligencia Artificial.",
+        "cv_banner_import_title": "💡 ¿Tienes un CV nuevo o deseas importar un documento fresco?",
+        "cv_banner_import_caption": "Sube tu archivo PDF, Word o TXT en **Mi Perfil** para que la IA extraiga automáticamente tu experiencia, educación y habilidades en un solo paso.",
+        "cv_banner_import_btn": "🚀 Importar CV Fresco",
         "cv_job_desc_label": "📋 Pega la descripción del puesto para un análisis personalizado (Opcional)",
         "cv_job_desc_placeholder": "Pega aquí los requisitos, responsabilidades o la descripción completa de la vacante para adaptar tus bullets con palabras clave...",
         "cv_editor_col_title": "✍️ Editor Interactivo de Bullets",
@@ -892,6 +895,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # --- 5.6a CV Builder & AI Optimizer ---
         "cv_builder_title": "📄 CV Builder & AI Optimizer",
         "cv_builder_caption": "Rewrite and optimize your experience bullet points with Artificial Intelligence.",
+        "cv_banner_import_title": "💡 Have a new resume or want to import a fresh document?",
+        "cv_banner_import_caption": "Upload your PDF, Word, or TXT file in **My Profile** so the AI can automatically extract your work experience, education, and skills in one go.",
+        "cv_banner_import_btn": "🚀 Import Fresh Resume",
         "cv_job_desc_label": "📋 Paste job description for tailored optimization (Optional)",
         "cv_job_desc_placeholder": "Paste job requirements, responsibilities, or full description here to tailor your bullets with keywords...",
         "cv_editor_col_title": "✍️ Interactive Bullet Editor",

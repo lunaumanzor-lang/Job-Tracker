@@ -824,7 +824,8 @@ menu_opcion = st.sidebar.radio(
     t("nav_select_section"),
     MENU_KEYS,
     format_func=lambda k: menu_label_map[k],
-    index=0
+    index=0,
+    key="main_nav_radio"
 )
 
 
@@ -2403,6 +2404,24 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
 elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Optimizer"):
     st.subheader(t("cv_builder_title"))
     st.caption(t("cv_builder_caption"))
+
+    # Banner de acceso rápido para importar CV fresco desde "Mi Perfil" (Fase 5.7)
+    with st.container(border=True):
+        col_ban_text, col_ban_btn = st.columns([3.2, 1.2])
+        with col_ban_text:
+            st.markdown(f"**{t('cv_banner_import_title')}**")
+            st.caption(t("cv_banner_import_caption"))
+        with col_ban_btn:
+            def ir_a_perfil_desde_cv():
+                st.session_state["main_nav_radio"] = "profile"
+
+            st.button(
+                t("cv_banner_import_btn"),
+                on_click=ir_a_perfil_desde_cv,
+                type="secondary",
+                use_container_width=True,
+                help=t("cv_banner_import_caption")
+            )
 
     # 1. Entrada opcional de la vacante (Job Description)
     job_description = st.text_area(
