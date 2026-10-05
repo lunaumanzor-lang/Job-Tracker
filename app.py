@@ -2405,23 +2405,170 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
     st.subheader(t("cv_builder_title"))
     st.caption(t("cv_builder_caption"))
 
-    # Banner de acceso rápido para importar CV fresco desde "Mi Perfil" (Fase 5.7)
-    with st.container(border=True):
-        col_ban_text, col_ban_btn = st.columns([3.2, 1.2])
-        with col_ban_text:
-            st.markdown(f"**{t('cv_banner_import_title')}**")
-            st.caption(t("cv_banner_import_caption"))
-        with col_ban_btn:
-            def ir_a_perfil_desde_cv():
-                st.session_state["main_nav_radio"] = "profile"
+    # --------------------------------------------------------------------------
+    # IMPORTACIÓN DIRECTA DE RESUME FRESCO DENTRO DE CV BUILDER
+    # --------------------------------------------------------------------------
+    with st.expander("📄 Importar / Actualizar Currículum Fresco (PDF, DOCX o TXT)", expanded=False):
+        st.caption("Carga un nuevo currículum para que la IA extraiga automáticamente tu experiencia, educación y habilidades directamente aquí.")
+        archivo_cv_builder = st.file_uploader(
+            "Selecciona tu archivo de currículum:",
+            type=["pdf", "docx", "txt"],
+            key="uploader_cv_builder_direct"
+        )
+        if archivo_cv_builder is not None:
+            try:
+                texto_cv_builder = extract_resume_text(archivo_cv_builder)
+                st.success(f"✅ Archivo '{archivo_cv_builder.name}' leído ({len(texto_cv_builder):,} caracteres extraídos).")
 
-            st.button(
-                t("cv_banner_import_btn"),
-                on_click=ir_a_perfil_desde_cv,
-                type="secondary",
-                use_container_width=True,
-                help=t("cv_banner_import_caption")
-            )
+                api_key_activa_cvb = get_api_key()
+                if not api_key_activa_cvb:
+                    st.warning("⚠️ No se detectó GEMINI_API_KEY. Ingresa tu API Key de Gemini:")
+                    k_in = st.text_input("Gemini API Key:", type="password", key="key_cvb_input")
+                    if k_in:
+                        api_key_activa_cvb = k_in.strip()
+                        os.environ["GEMINI_API_KEY"] = api_key_activa_cvb
+
+                if st.button("🚀 Analizar CV y Extraer Información con IA", type="primary", disabled=not bool(api_key_activa_cvb), key="btn_parse_cvb_direct"):
+                    with st.spinner("🤖 La IA está leyendo tu currículum y estructurando tu experiencia, bullets, habilidades y educación..."):
+                        try:
+                            resultado_cvb = extract_skills_and_profile_from_resume(texto_cv_builder, api_key=api_key_activa_cvb)
+                            st.session_state["pending_resume_review_cvb"] = resultado_cvb
+                            st.rerun()
+                        except Exception as e_ai:
+                            st.error(f"Error con IA: {e_ai}")
+            except Exception as e_read:
+                st.error(f"Error al leer archivo: {e_read}")
+
+    # Pantalla de revisión previa dentro de CV Builder si hay una extracción pendiente
+    if "pending_resume_review_cvb" in st.session_state and st.session_state["pending_resume_review_cvb"]:
+        rev_cvb = st.session_state["pending_resume_review_cvb"]
+        st.markdown(f"### {t('profile_review_title')}")
+        st.caption(t("profile_review_caption"))
+
+        with st.container(border=True):
+            # A. Perfil General
+            st.markdown(f"#### 👤 {t('profile_card_title')}")
+            prof_rev = rev_cvb.get("profile", {})
+            c_p1, c_p2 = st.columns(2)
+            with c_p1:
+                rev_name = st.text_input(t("profile_field_name"), value=prof_rev.get("full_name") or "", key="cvb_rev_name")
+                rev_email = st.text_input(t("profile_field_email"), value=prof_rev.get("email") or "", key="cvb_rev_email")
+                rev_loc = st.text_input(t("profile_field_location"), value=prof_rev.get("location") or "", key="cvb_rev_loc")
+            with c_p2:
+                rev_title = st.text_input(t("profile_field_title"), value=prof_rev.get("current_title") or "", key="cvb_rev_title")
+                rev_phone = st.text_input(t("profile_field_phone"), value=prof_rev.get("phone") or "", key="cvb_rev_phone")
+            rev_sum = st.text_area(t("profile_field_summary"), value=prof_rev.get("summary") or "", height=80, key="cvb_rev_sum")
+
+            # B. Habilidades Extraídas
+            skills_rev = rev_cvb.get("skills", [])
+            st.markdown(f"#### {t('profile_review_skills_header', count=len(skills_rev))}")
+            if skills_rev:
+                skills_tags = [f"**{s['skill_name']}** (`{s['category']}`)" for s in skills_rev]
+                st.markdown(" • ".join(skills_tags))
+
+            # C. Experiencia Laboral Extraída
+            exp_rev = rev_cvb.get("experience", [])
+            st.markdown(f"#### {t('profile_review_exp_header')} ({len(exp_rev)})")
+            
+            reviewed_experiences = []
+            for idx_e, exp_item in enumerate(exp_rev):
+                with st.expander(f"💼 {exp_item.get('position', 'Puesto')} en {exp_item.get('company', 'Empresa')}", expanded=True):
+                    col_ex1, col_ex2 = st.columns(2)
+                    with col_ex1:
+                        c_val = st.text_input(t("profile_review_company"), value=exp_item.get("company", ""), key=f"cvb_rev_comp_{idx_e}")
+                        p_val = st.text_input(t("profile_review_position"), value=exp_item.get("position", ""), key=f"cvb_rev_pos_{idx_e}")
+                    with col_ex2:
+                        cur_val = st.checkbox(t("profile_review_current_job"), value=bool(exp_item.get("is_current")), key=f"cvb_rev_cur_{idx_e}")
+                        col_dt1, col_dt2 = st.columns(2)
+                        with col_dt1:
+                            s_date_init = exp_item.get("start_date") or ""
+                            s_val = st.text_input(t("profile_review_start_date"), value=s_date_init, key=f"cvb_rev_sdate_{idx_e}")
+                            if not s_date_init and exp_item.get("start_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('start_date_raw')}')")
+                        with col_dt2:
+                            e_date_init = exp_item.get("end_date") or ""
+                            e_val = st.text_input(
+                                t("profile_review_end_date"),
+                                value=e_date_init,
+                                placeholder="Trabajo actual (en curso)" if cur_val else "YYYY-MM",
+                                help="Si marcas 'Trabajo actual', este campo se ignorará y se guardará como trabajo en curso.",
+                                key=f"cvb_rev_edate_{idx_e}"
+                            )
+                            if not cur_val and not e_val and exp_item.get("end_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('end_date_raw')}')")
+
+                    raw_bullets_str = "\n".join(exp_item.get("bullets", []))
+                    bullets_area = st.text_area(t("profile_review_bullets_label"), value=raw_bullets_str, height=100, key=f"cvb_rev_bullets_{idx_e}")
+                    clean_bullets = [b.strip() for b in bullets_area.splitlines() if b.strip()]
+
+                    reviewed_experiences.append({
+                        "company": c_val.strip(),
+                        "position": p_val.strip(),
+                        "start_date": s_val.strip() if s_val.strip() else None,
+                        "end_date": None if cur_val else (e_val.strip() if e_val.strip() else None),
+                        "is_current": cur_val,
+                        "bullets": clean_bullets,
+                        "order_index": idx_e + 1
+                    })
+
+            # D. Educación Extraída
+            edu_rev = rev_cvb.get("education", [])
+            st.markdown(f"#### {t('profile_review_edu_header')} ({len(edu_rev)})")
+            reviewed_education = []
+            for idx_ed, edu_item in enumerate(edu_rev):
+                with st.expander(f"🎓 {edu_item.get('credential', 'Certificación')} — {edu_item.get('institution', 'Institución')}", expanded=True):
+                    col_ed1, col_ed2 = st.columns(2)
+                    with col_ed1:
+                        inst_val = st.text_input(t("profile_review_institution"), value=edu_item.get("institution", ""), key=f"cvb_rev_inst_{idx_ed}")
+                        cred_val = st.text_input(t("profile_review_credential"), value=edu_item.get("credential", ""), key=f"cvb_rev_cred_{idx_ed}")
+                    with col_ed2:
+                        col_edd1, col_edd2 = st.columns(2)
+                        with col_edd1:
+                            eds_init = edu_item.get("start_date") or ""
+                            eds_val = st.text_input(t("profile_review_start_date"), value=eds_init, key=f"cvb_rev_eds_{idx_ed}")
+                            if not eds_init and edu_item.get("start_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('start_date_raw')}')")
+                        with col_edd2:
+                            ede_init = edu_item.get("end_date") or ""
+                            ede_val = st.text_input(t("profile_review_end_date"), value=ede_init, key=f"cvb_rev_ede_{idx_ed}")
+                            if not ede_init and edu_item.get("end_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('end_date_raw')}')")
+
+                    reviewed_education.append({
+                        "institution": inst_val.strip(),
+                        "credential": cred_val.strip(),
+                        "start_date": eds_val.strip() if eds_val.strip() else None,
+                        "end_date": ede_val.strip() if ede_val.strip() else None,
+                        "order_index": idx_ed + 1
+                    })
+
+            # Botones de Acción
+            st.divider()
+            col_save_btn, col_disc_btn = st.columns([2, 1])
+            with col_save_btn:
+                if st.button(t("profile_review_btn_save"), type="primary", use_container_width=True, key="btn_confirm_cvb_save"):
+                    save_user_profile(
+                        full_name=rev_name.strip() or None,
+                        current_title=rev_title.strip() or None,
+                        email=rev_email.strip() or None,
+                        phone=rev_phone.strip() or None,
+                        location=rev_loc.strip() or None,
+                        summary=rev_sum.strip() or None
+                    )
+                    if skills_rev:
+                        add_user_skills_bulk(skills_rev, source="Resume")
+                    save_parsed_resume_data(reviewed_experiences, reviewed_education, replace_existing=True)
+
+                    del st.session_state["pending_resume_review_cvb"]
+                    st.toast(t("profile_review_saved_toast"), icon="🎉")
+                    st.rerun()
+
+            with col_disc_btn:
+                if st.button(t("profile_review_btn_discard"), use_container_width=True, key="btn_discard_cvb_review"):
+                    del st.session_state["pending_resume_review_cvb"]
+                    st.toast(t("profile_review_discarded_toast"), icon="ℹ️")
+                    st.rerun()
+
 
     # 1. Entrada opcional de la vacante (Job Description)
     job_description = st.text_area(
