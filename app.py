@@ -1195,8 +1195,14 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                                 st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('start_date_raw')}')")
                         with col_dt2:
                             e_date_init = exp_item.get("end_date") or ""
-                            e_val = st.text_input(t("profile_review_end_date"), value="" if cur_val else e_date_init, disabled=cur_val, key=f"rev_edate_{idx_e}")
-                            if not cur_val and not e_date_init and exp_item.get("end_date_raw"):
+                            e_val = st.text_input(
+                                t("profile_review_end_date"),
+                                value=e_date_init,
+                                placeholder="Trabajo actual (en curso)" if cur_val else "YYYY-MM",
+                                help="Si marcas 'Trabajo actual', este campo se ignorará y se guardará como trabajo en curso.",
+                                key=f"rev_edate_{idx_e}"
+                            )
+                            if not cur_val and not e_val and exp_item.get("end_date_raw"):
                                 st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('end_date_raw')}')")
 
                     raw_bullets_str = "\n".join(exp_item.get("bullets", []))
@@ -2491,7 +2497,7 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                     with c_ned1:
                         ne_sdate = st.text_input("Inicio (YYYY-MM)", placeholder="2022-01")
                     with c_ned2:
-                        ne_edate = st.text_input("Fin (YYYY-MM)", placeholder="2024-05", disabled=ne_cur)
+                        ne_edate = st.text_input("Fin (YYYY-MM)", placeholder="2024-05", help="Ignorado si marcas '¿Es tu trabajo actual?'")
                 
                 ne_first_bullet = st.text_area("Primer logro / bullet (opcional)", placeholder="Logro o responsabilidad inicial...", height=70)
                 btn_submit_exp = st.form_submit_button("💾 Guardar Nueva Experiencia", type="primary")
@@ -2541,7 +2547,7 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                                 with c_updd1:
                                     upd_s = st.text_input("Inicio (YYYY-MM)", value=exp["start_date"] or "", key=f"upd_s_{exp_id}")
                                 with c_updd2:
-                                    upd_e = st.text_input("Fin (YYYY-MM)", value=exp["end_date"] or "", disabled=upd_cur, key=f"upd_e_{exp_id}")
+                                    upd_e = st.text_input("Fin (YYYY-MM)", value=exp["end_date"] or "", placeholder="YYYY-MM", help="Ignorado si marcas 'Trabajo actual'", key=f"upd_e_{exp_id}")
 
                             if st.form_submit_button("💾 Guardar Cambios de Puesto"):
                                 update_experience_entry(
