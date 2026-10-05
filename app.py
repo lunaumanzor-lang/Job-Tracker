@@ -55,7 +55,7 @@ from database import (
 )
 
 # Fase 6.1 & 6.2: Sistema centralizado de traducción
-from translations import t, t_status, t_work_mode
+from translations import t, t_status, t_work_mode, get_current_language
 
 # Módulos de extracción de CV, Web Scraping e Inteligencia Artificial
 from resume_parser import extract_resume_text
