@@ -46,12 +46,22 @@ from database import (
     get_user_preferred_language,
     set_user_preferred_language,
     CURRENCY_OPTIONS,
-    # Fase 5.6a: CV Builder & AI Optimizer
+    # Fase 5.6a & 5.7: CV Builder, Experiencia, Bullets y Educación
+    get_all_experiences,
+    add_experience_entry,
+    update_experience_entry,
+    delete_experience_entry,
     get_all_resume_bullets,
+    get_bullets_by_experience,
     add_resume_bullet,
     update_resume_bullet,
     delete_resume_bullet,
-    seed_default_resume_bullets
+    seed_default_resume_bullets,
+    get_all_education,
+    add_education_entry,
+    update_education_entry,
+    delete_education_entry,
+    save_parsed_resume_data
 )
 
 # Fase 6.1 & 6.2: Sistema centralizado de traducción
@@ -1128,29 +1138,138 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                 with st.spinner(t("profile_cv_analyzing_spinner")):
                     try:
                         resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa)
-                        
-                        # Guardamos perfil detectado si no existe
-                        prof_data = resultado.get("profile", {})
-                        if prof_data:
-                            save_user_profile(
-                                full_name=prof_data.get("full_name"),
-                                current_title=prof_data.get("current_title"),
-                                email=prof_data.get("email"),
-                                phone=prof_data.get("phone"),
-                                location=prof_data.get("location"),
-                                summary=prof_data.get("summary")
-                            )
-
-                        # Guardamos skills en bulk
-                        skills_extraidas = resultado.get("skills", [])
-                        total_insertadas = add_user_skills_bulk(skills_extraidas, source="Resume")
-                        
-                        st.success(t("profile_analysis_success", count=total_insertadas))
+                        st.session_state["pending_resume_review"] = resultado
                         st.rerun()
                     except Exception as err:
                         st.error(t("profile_ai_error", error=err))
         except Exception as err_lectura:
             st.error(t("profile_read_file_error", error=err_lectura))
+
+    # --------------------------------------------------------------------------
+    # PANTALLA DE REVISIÓN ANTES DE GUARDAR EN SQLITE (Fase 5.7)
+    # --------------------------------------------------------------------------
+    if "pending_resume_review" in st.session_state and st.session_state["pending_resume_review"]:
+        review_data = st.session_state["pending_resume_review"]
+        st.markdown(f"### {t('profile_review_title')}")
+        st.caption(t("profile_review_caption"))
+
+        with st.container(border=True):
+            # A. Perfil General
+            st.markdown(f"#### 👤 {t('profile_card_title')}")
+            prof_rev = review_data.get("profile", {})
+            c_p1, c_p2 = st.columns(2)
+            with c_p1:
+                rev_name = st.text_input(t("profile_field_name"), value=prof_rev.get("full_name") or "", key="rev_input_name")
+                rev_email = st.text_input(t("profile_field_email"), value=prof_rev.get("email") or "", key="rev_input_email")
+                rev_loc = st.text_input(t("profile_field_location"), value=prof_rev.get("location") or "", key="rev_input_loc")
+            with c_p2:
+                rev_title = st.text_input(t("profile_field_title"), value=prof_rev.get("current_title") or "", key="rev_input_title")
+                rev_phone = st.text_input(t("profile_field_phone"), value=prof_rev.get("phone") or "", key="rev_input_phone")
+            rev_sum = st.text_area(t("profile_field_summary"), value=prof_rev.get("summary") or "", height=80, key="rev_input_sum")
+
+            # B. Habilidades Extraídas
+            skills_rev = review_data.get("skills", [])
+            st.markdown(f"#### {t('profile_review_skills_header', count=len(skills_rev))}")
+            if skills_rev:
+                skills_tags = [f"**{s['skill_name']}** (`{s['category']}`)" for s in skills_rev]
+                st.markdown(" • ".join(skills_tags))
+
+            # C. Experiencia Laboral Extraída
+            exp_rev = review_data.get("experience", [])
+            st.markdown(f"#### {t('profile_review_exp_header')} ({len(exp_rev)})")
+            
+            reviewed_experiences = []
+            for idx_e, exp_item in enumerate(exp_rev):
+                with st.expander(f"💼 {exp_item.get('position', 'Puesto')} en {exp_item.get('company', 'Empresa')}", expanded=True):
+                    col_ex1, col_ex2 = st.columns(2)
+                    with col_ex1:
+                        c_val = st.text_input(t("profile_review_company"), value=exp_item.get("company", ""), key=f"rev_comp_{idx_e}")
+                        p_val = st.text_input(t("profile_review_position"), value=exp_item.get("position", ""), key=f"rev_pos_{idx_e}")
+                    with col_ex2:
+                        cur_val = st.checkbox(t("profile_review_current_job"), value=bool(exp_item.get("is_current")), key=f"rev_cur_{idx_e}")
+                        col_dt1, col_dt2 = st.columns(2)
+                        with col_dt1:
+                            s_date_init = exp_item.get("start_date") or ""
+                            s_val = st.text_input(t("profile_review_start_date"), value=s_date_init, key=f"rev_sdate_{idx_e}")
+                            if not s_date_init and exp_item.get("start_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('start_date_raw')}')")
+                        with col_dt2:
+                            e_date_init = exp_item.get("end_date") or ""
+                            e_val = st.text_input(t("profile_review_end_date"), value="" if cur_val else e_date_init, disabled=cur_val, key=f"rev_edate_{idx_e}")
+                            if not cur_val and not e_date_init and exp_item.get("end_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('end_date_raw')}')")
+
+                    raw_bullets_str = "\n".join(exp_item.get("bullets", []))
+                    bullets_area = st.text_area(t("profile_review_bullets_label"), value=raw_bullets_str, height=100, key=f"rev_bullets_{idx_e}")
+                    clean_bullets = [b.strip() for b in bullets_area.splitlines() if b.strip()]
+
+                    reviewed_experiences.append({
+                        "company": c_val.strip(),
+                        "position": p_val.strip(),
+                        "start_date": s_val.strip() if s_val.strip() else None,
+                        "end_date": None if cur_val else (e_val.strip() if e_val.strip() else None),
+                        "is_current": cur_val,
+                        "bullets": clean_bullets,
+                        "order_index": idx_e + 1
+                    })
+
+            # D. Educación Extraída
+            edu_rev = review_data.get("education", [])
+            st.markdown(f"#### {t('profile_review_edu_header')} ({len(edu_rev)})")
+            reviewed_education = []
+            for idx_ed, edu_item in enumerate(edu_rev):
+                with st.expander(f"🎓 {edu_item.get('credential', 'Certificación')} — {edu_item.get('institution', 'Institución')}", expanded=True):
+                    col_ed1, col_ed2 = st.columns(2)
+                    with col_ed1:
+                        inst_val = st.text_input(t("profile_review_institution"), value=edu_item.get("institution", ""), key=f"rev_inst_{idx_ed}")
+                        cred_val = st.text_input(t("profile_review_credential"), value=edu_item.get("credential", ""), key=f"rev_cred_{idx_ed}")
+                    with col_ed2:
+                        col_edd1, col_edd2 = st.columns(2)
+                        with col_edd1:
+                            eds_init = edu_item.get("start_date") or ""
+                            eds_val = st.text_input(t("profile_review_start_date"), value=eds_init, key=f"rev_eds_{idx_ed}")
+                            if not eds_init and edu_item.get("start_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('start_date_raw')}')")
+                        with col_edd2:
+                            ede_init = edu_item.get("end_date") or ""
+                            ede_val = st.text_input(t("profile_review_end_date"), value=ede_init, key=f"rev_ede_{idx_ed}")
+                            if not ede_init and edu_item.get("end_date_raw"):
+                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('end_date_raw')}')")
+
+                    reviewed_education.append({
+                        "institution": inst_val.strip(),
+                        "credential": cred_val.strip(),
+                        "start_date": eds_val.strip() if eds_val.strip() else None,
+                        "end_date": ede_val.strip() if ede_val.strip() else None,
+                        "order_index": idx_ed + 1
+                    })
+
+            # Botones de Acción
+            st.divider()
+            col_save_btn, col_disc_btn = st.columns([2, 1])
+            with col_save_btn:
+                if st.button(t("profile_review_btn_save"), type="primary", use_container_width=True, key="btn_confirm_review_save"):
+                    save_user_profile(
+                        full_name=rev_name.strip() or None,
+                        current_title=rev_title.strip() or None,
+                        email=rev_email.strip() or None,
+                        phone=rev_phone.strip() or None,
+                        location=rev_loc.strip() or None,
+                        summary=rev_sum.strip() or None
+                    )
+                    if skills_rev:
+                        add_user_skills_bulk(skills_rev, source="Resume")
+                    save_parsed_resume_data(reviewed_experiences, reviewed_education, replace_existing=True)
+
+                    del st.session_state["pending_resume_review"]
+                    st.toast(t("profile_review_saved_toast"), icon="🎉")
+                    st.rerun()
+
+            with col_disc_btn:
+                if st.button(t("profile_review_btn_discard"), use_container_width=True, key="btn_discard_review"):
+                    del st.session_state["pending_resume_review"]
+                    st.toast(t("profile_review_discarded_toast"), icon="ℹ️")
+                    st.rerun()
 
     st.divider()
 
@@ -2287,11 +2406,17 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
         key="cv_job_desc_input"
     )
 
-    # Obtenemos los bullets persistidos en SQLite para organizar el editor y compilar el resume
+    # Obtenemos las experiencias, bullets y educación persistidos en SQLite
+    experiences = get_all_experiences()
     bullets = get_all_resume_bullets()
+    education = get_all_education()
+
+    # Mapeamos bullets por experience_id y por sección para compatibilidad
+    bullets_by_exp = {}
     sections_dict = {}
     for b in bullets:
-        sections_dict.setdefault(b["section"], []).append(b)
+        bullets_by_exp.setdefault(b["experience_id"], []).append(b)
+        sections_dict.setdefault(b.get("section", "Experiencia"), []).append(b)
 
     # Fila de modo y botón de Match Score completo (Fase 5.6b)
     col_mode_info, col_calc_match = st.columns([3, 2])
@@ -2305,7 +2430,7 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
         # El botón de Match Score solo se muestra si hay una vacante pegada
         if job_description.strip():
             if st.button(t("cv_btn_calculate_match"), type="primary", use_container_width=True, key="btn_cv_calculate_match"):
-                # Construimos el texto completo del resume concatenando perfil y bullets actuales por sección
+                # Construimos el texto completo del resume concatenando perfil, experiencias y educación
                 user_prof = get_user_profile()
                 resume_lines = []
                 if user_prof:
@@ -2314,10 +2439,17 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                     if user_prof.get("summary"):
                         resume_lines.append(f"Resumen Profesional: {user_prof['summary']}")
 
-                for s_title, s_bullets in sections_dict.items():
-                    resume_lines.append(f"\nExperiencia en {s_title}:")
-                    for b_item in s_bullets:
+                for exp in experiences:
+                    fechas_exp = f"({exp['start_date'] or ''} - {'Presente' if exp['is_current'] else (exp['end_date'] or '')})"
+                    resume_lines.append(f"\nExperiencia: {exp['position']} en {exp['company']} {fechas_exp}:")
+                    for b_item in bullets_by_exp.get(exp["id"], []):
                         resume_lines.append(f"- {b_item['current_text']}")
+
+                if education:
+                    resume_lines.append("\nEducación y Certificaciones:")
+                    for edu in education:
+                        fechas_edu = f"({edu['start_date'] or ''} - {edu['end_date'] or ''})"
+                        resume_lines.append(f"- {edu['credential']} en {edu['institution']} {fechas_edu}")
 
                 full_resume_text = "\n".join(resume_lines)
 
@@ -2341,108 +2473,176 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
     col_editor, col_preview = st.columns([1, 1], gap="large")
 
     # --------------------------------------------------------------------------
-    # COLUMNA IZQUIERDA: EDITOR INTERACTIVO DE BULLETS
+    # COLUMNA IZQUIERDA: EDITOR INTERACTIVO DE EXPERIENCIA Y BULLETS
     # --------------------------------------------------------------------------
     with col_editor:
         st.markdown(f"### {t('cv_editor_col_title')}")
 
-        # Formulario para agregar un nuevo bullet a una sección
-        with st.expander(t("cv_add_bullet_expander"), expanded=False):
-            with st.form("form_add_new_bullet"):
-                existing_sections = list(sections_dict.keys())
-                sec_opts = ["➕ Nueva Sección..."] + existing_sections if existing_sections else ["➕ Nueva Sección..."]
-                sel_sec = st.selectbox(
-                    f"{t('cv_section_label')}",
-                    options=sec_opts
-                )
-                if sel_sec.startswith("➕"):
-                    new_sec_name = st.text_input("Nombre de la nueva sección *", placeholder=t("cv_section_placeholder"))
-                else:
-                    new_sec_name = sel_sec
+        # Formulario para agregar una nueva experiencia laboral estructurada
+        with st.expander("➕ Agregar nueva experiencia laboral", expanded=False):
+            with st.form("form_add_new_experience"):
+                c_ne1, c_ne2 = st.columns(2)
+                with c_ne1:
+                    ne_comp = st.text_input("Empresa *", placeholder="Ej. Amazon, Google, StartUp...")
+                    ne_pos = st.text_input("Puesto / Cargo *", placeholder="Ej. Senior Cloud Engineer...")
+                with c_ne2:
+                    ne_cur = st.checkbox("¿Es tu trabajo actual?", value=False)
+                    c_ned1, c_ned2 = st.columns(2)
+                    with c_ned1:
+                        ne_sdate = st.text_input("Inicio (YYYY-MM)", placeholder="2022-01")
+                    with c_ned2:
+                        ne_edate = st.text_input("Fin (YYYY-MM)", placeholder="2024-05", disabled=ne_cur)
+                
+                ne_first_bullet = st.text_area("Primer logro / bullet (opcional)", placeholder="Logro o responsabilidad inicial...", height=70)
+                btn_submit_exp = st.form_submit_button("💾 Guardar Nueva Experiencia", type="primary")
 
-                new_bullet_content = st.text_area(t("cv_bullet_text_label"), placeholder=t("cv_bullet_text_placeholder"), height=85)
-                btn_submit_bullet = st.form_submit_button(t("cv_btn_save_new_bullet"), type="primary")
-
-                if btn_submit_bullet:
-                    if new_sec_name.strip() and new_bullet_content.strip():
-                        add_resume_bullet(new_sec_name.strip(), new_bullet_content.strip())
-                        st.toast(t("cv_bullet_added_toast"), icon="✅")
+                if btn_submit_exp:
+                    if ne_comp.strip() and ne_pos.strip():
+                        new_eid = add_experience_entry(
+                            company=ne_comp.strip(),
+                            position=ne_pos.strip(),
+                            start_date=ne_sdate.strip() if ne_sdate.strip() else None,
+                            end_date=None if ne_cur else (ne_edate.strip() if ne_edate.strip() else None),
+                            is_current=ne_cur
+                        )
+                        if ne_first_bullet.strip():
+                            add_resume_bullet(new_eid, ne_first_bullet.strip())
+                        st.toast("✅ Experiencia agregada exitosamente", icon="💼")
                         st.rerun()
                     else:
-                        st.error(t("cv_err_empty_bullet"))
+                        st.error("Por favor completa al menos la empresa y el cargo.")
 
-        if not bullets:
+        if not experiences:
             st.warning(t("cv_no_bullets"))
             if st.button(t("cv_btn_reset_defaults")):
                 seed_default_resume_bullets()
                 st.rerun()
         else:
-            for sec_name, sec_bullets in sections_dict.items():
-                st.markdown(f"#### 🏢 {sec_name}")
-                for b in sec_bullets:
-                    b_id = b["id"]
-                    with st.container(border=True):
-                        pending_prop_key = f"cv_pending_improvement_{b_id}"
-                        pending_mode_key = f"cv_pending_mode_{b_id}"
+            for exp in experiences:
+                exp_id = exp["id"]
+                exp_bullets = bullets_by_exp.get(exp_id, [])
+                dates_badge = f"{exp['start_date'] or ''} — {'Presente' if exp['is_current'] else (exp['end_date'] or '')}"
 
-                        if pending_prop_key in st.session_state:
-                            st.caption(f"📌 {t('cv_current_label')}")
-                            st.write(b["current_text"])
+                with st.container(border=True):
+                    # Cabecera de la Experiencia
+                    st.markdown(f"#### 🏢 {exp['position']} — **{exp['company']}**")
+                    st.caption(f"📅 **Período:** `{dates_badge}`")
 
-                            active_mode = t("cv_mode_tailored") if st.session_state.get(pending_mode_key) == "tailored" else t("cv_mode_general")
-                            st.success(f"**{t('cv_improvement_pending', mode=active_mode)}**\n\n{st.session_state[pending_prop_key]}")
+                    # Expander para editar la empresa, puesto y fechas
+                    with st.expander("✏️ Editar datos de este puesto / empresa", expanded=False):
+                        with st.form(f"form_edit_exp_{exp_id}"):
+                            ced_1, ced_2 = st.columns(2)
+                            with ced_1:
+                                upd_comp = st.text_input("Empresa", value=exp["company"], key=f"upd_c_{exp_id}")
+                                upd_pos = st.text_input("Puesto", value=exp["position"], key=f"upd_p_{exp_id}")
+                            with ced_2:
+                                upd_cur = st.checkbox("Trabajo actual", value=bool(exp["is_current"]), key=f"upd_cur_{exp_id}")
+                                c_updd1, c_updd2 = st.columns(2)
+                                with c_updd1:
+                                    upd_s = st.text_input("Inicio (YYYY-MM)", value=exp["start_date"] or "", key=f"upd_s_{exp_id}")
+                                with c_updd2:
+                                    upd_e = st.text_input("Fin (YYYY-MM)", value=exp["end_date"] or "", disabled=upd_cur, key=f"upd_e_{exp_id}")
 
-                            c_acc, c_disc = st.columns(2)
-                            with c_acc:
-                                if st.button(t("cv_btn_accept"), key=f"btn_accept_{b_id}", type="primary"):
-                                    # Persistencia real en SQLite tras confirmación explícita
-                                    update_resume_bullet(b_id, st.session_state[pending_prop_key])
-                                    del st.session_state[pending_prop_key]
-                                    if pending_mode_key in st.session_state:
-                                        del st.session_state[pending_mode_key]
-                                    st.toast(t("cv_bullet_saved_toast"), icon="💾")
+                            if st.form_submit_button("💾 Guardar Cambios de Puesto"):
+                                update_experience_entry(
+                                    exp_id,
+                                    upd_comp,
+                                    upd_pos,
+                                    upd_s.strip() if upd_s.strip() else None,
+                                    None if upd_cur else (upd_e.strip() if upd_e.strip() else None),
+                                    upd_cur
+                                )
+                                st.toast("Datos actualizados", icon="💾")
+                                st.rerun()
+
+                    # Bullets pertenecientes a esta experiencia
+                    if not exp_bullets:
+                        st.info("Aún no hay viñetas/bullets para este puesto.")
+                    else:
+                        for b in exp_bullets:
+                            b_id = b["id"]
+                            with st.container(border=True):
+                                pending_prop_key = f"cv_pending_improvement_{b_id}"
+                                pending_mode_key = f"cv_pending_mode_{b_id}"
+
+                                if pending_prop_key in st.session_state:
+                                    st.caption(f"📌 {t('cv_current_label')}")
+                                    st.write(b["current_text"])
+
+                                    active_mode = t("cv_mode_tailored") if st.session_state.get(pending_mode_key) == "tailored" else t("cv_mode_general")
+                                    st.success(f"**{t('cv_improvement_pending', mode=active_mode)}**\n\n{st.session_state[pending_prop_key]}")
+
+                                    c_acc, c_disc = st.columns(2)
+                                    with c_acc:
+                                        if st.button(t("cv_btn_accept"), key=f"btn_accept_{b_id}", type="primary"):
+                                            # Persistencia real en SQLite tras confirmación explícita
+                                            update_resume_bullet(b_id, st.session_state[pending_prop_key])
+                                            del st.session_state[pending_prop_key]
+                                            if pending_mode_key in st.session_state:
+                                                del st.session_state[pending_mode_key]
+                                            st.toast(t("cv_bullet_saved_toast"), icon="💾")
+                                            st.rerun()
+                                    with c_disc:
+                                        if st.button(t("cv_btn_discard"), key=f"btn_discard_{b_id}"):
+                                            # Descartar propuesta en session_state sin alterar SQLite
+                                            del st.session_state[pending_prop_key]
+                                            if pending_mode_key in st.session_state:
+                                                del st.session_state[pending_mode_key]
+                                            st.info(t("cv_improvement_discarded"))
+                                            st.rerun()
+                                else:
+                                    # Vista normal de edición manual
+                                    edited_text = st.text_area(
+                                        t("cv_bullet_text_label"),
+                                        value=b["current_text"],
+                                        key=f"txt_bullet_val_{b_id}",
+                                        height=80,
+                                        label_visibility="collapsed"
+                                    )
+
+                                    b_c1, b_c2, b_c3 = st.columns([3, 1, 1])
+                                    with b_c1:
+                                        if st.button(f"⚡ {t('cv_btn_improve_ai')}", key=f"btn_ai_improve_{b_id}"):
+                                            with st.spinner("🤖 Generando propuesta de redacción..."):
+                                                improved = rewrite_resume_bullet(
+                                                    current_bullet=edited_text,
+                                                    job_description=job_description
+                                                )
+                                                # Guardamos la propuesta en memoria (session_state) antes de persistir
+                                                st.session_state[pending_prop_key] = improved
+                                                st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
+                                                st.rerun()
+                                    with b_c2:
+                                        if edited_text != b["current_text"]:
+                                            if st.button("💾", key=f"btn_save_txt_{b_id}", help=t("btn_save")):
+                                                update_resume_bullet(b_id, edited_text)
+                                                st.toast(t("cv_bullet_saved_toast"), icon="💾")
+                                                st.rerun()
+                                    with b_c3:
+                                        if st.button("🗑️", key=f"btn_del_b_{b_id}", help=t("btn_delete")):
+                                            delete_resume_bullet(b_id)
+                                            st.toast(t("cv_bullet_deleted_toast"), icon="🗑️")
+                                            st.rerun()
+
+                    # Formulario para agregar un nuevo bullet a esta experiencia
+                    with st.expander(f"➕ Agregar viñeta / bullet a este puesto", expanded=False):
+                        with st.form(f"form_add_b_{exp_id}"):
+                            new_b_text = st.text_area("Texto del logro o responsabilidad:", placeholder="Ej. Lideré la migración de...", height=75)
+                            if st.form_submit_button("➕ Agregar viñeta", type="primary"):
+                                if new_b_text.strip():
+                                    add_resume_bullet(exp_id, new_b_text.strip())
+                                    st.toast("Bullet agregado con éxito", icon="✅")
                                     st.rerun()
-                            with c_disc:
-                                if st.button(t("cv_btn_discard"), key=f"btn_discard_{b_id}"):
-                                    # Descartar propuesta en session_state sin alterar SQLite
-                                    del st.session_state[pending_prop_key]
-                                    if pending_mode_key in st.session_state:
-                                        del st.session_state[pending_mode_key]
-                                    st.info(t("cv_improvement_discarded"))
-                                    st.rerun()
-                        else:
-                            # Vista normal de edición manual
-                            edited_text = st.text_area(
-                                t("cv_bullet_text_label"),
-                                value=b["current_text"],
-                                key=f"txt_bullet_val_{b_id}",
-                                height=80,
-                                label_visibility="collapsed"
-                            )
+                                else:
+                                    st.error("El texto del bullet no puede estar vacío.")
 
-                            b_c1, b_c2, b_c3 = st.columns([3, 1, 1])
-                            with b_c1:
-                                if st.button(f"⚡ {t('cv_btn_improve_ai')}", key=f"btn_ai_improve_{b_id}"):
-                                    with st.spinner("🤖 Generando propuesta de redacción..."):
-                                        improved = rewrite_resume_bullet(
-                                            current_bullet=edited_text,
-                                            job_description=job_description
-                                        )
-                                        # Guardamos la propuesta en memoria (session_state) antes de persistir
-                                        st.session_state[pending_prop_key] = improved
-                                        st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
-                                        st.rerun()
-                            with b_c2:
-                                if edited_text != b["current_text"]:
-                                    if st.button("💾", key=f"btn_save_txt_{b_id}", help=t("btn_save")):
-                                        update_resume_bullet(b_id, edited_text)
-                                        st.toast(t("cv_bullet_saved_toast"), icon="💾")
-                                        st.rerun()
-                            with b_c3:
-                                if st.button("🗑️", key=f"btn_del_b_{b_id}", help=t("btn_delete")):
-                                    delete_resume_bullet(b_id)
-                                    st.toast(t("cv_bullet_deleted_toast"), icon="🗑️")
-                                    st.rerun()
+                    # Botón para eliminar la experiencia completa
+                    with st.expander("🗑️ Eliminar este puesto completo", expanded=False):
+                        st.caption("Esta acción eliminará el puesto y todos sus bullets asociados.")
+                        if st.button(f"Eliminar {exp['position']} permanentemente", key=f"btn_del_exp_{exp_id}", type="secondary"):
+                            delete_experience_entry(exp_id)
+                            st.toast("Experiencia eliminada", icon="🗑️")
+                            st.rerun()
 
     # --------------------------------------------------------------------------
     # COLUMNA DERECHA: PESTAÑAS DE MATCH SCORE Y VISTA PREVIA DEL PDF
@@ -2634,11 +2834,20 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
                     st.divider()
 
                 st.markdown("#### **Experiencia Profesional**")
-                if not bullets:
+                if not experiences:
                     st.caption(t("no_data"))
                 else:
-                    for s_name, s_bullets in sections_dict.items():
-                        st.markdown(f"**{s_name}**")
-                        for b_item in s_bullets:
+                    for exp in experiences:
+                        exp_id = exp["id"]
+                        exp_bullets = bullets_by_exp.get(exp_id, [])
+                        dates_badge = f"{exp['start_date'] or ''} — {'Presente' if exp['is_current'] else (exp['end_date'] or '')}"
+                        st.markdown(f"**{exp['position']}** — {exp['company']} *({dates_badge})*")
+                        for b_item in exp_bullets:
                             st.markdown(f"- {b_item['current_text']}")
                         st.write("")
+
+                if education:
+                    st.markdown("#### **Educación y Certificaciones**")
+                    for edu in education:
+                        ed_f = f"({edu['start_date'] or ''} — {edu['end_date'] or ''})" if edu.get("start_date") or edu.get("end_date") else ""
+                        st.markdown(f"**{edu['credential']}** — {edu['institution']} *{ed_f}*")

@@ -153,25 +153,56 @@ def create_tables():
         """)
 
         # ----------------------------------------------------------------------
-        # TABLA 6: resume_bullets (Fase 5.6a: CV Builder & AI Optimizer)
-        # Almacena los puntos clave (bullets) del CV por sección/empresa.
-        # original_text: Texto base original del CV.
-        # current_text: Texto actualmente editado o mejorado con IA.
-        # order_index: Posición para mantener el orden secuencial.
+        # FASE 5.7: REINICIO LIMPIO DE RESUME_BULLETS Y NUEVAS TABLAS
+        # 1. experience_entries: experiencia laboral estructurada (fechas normalizadas)
+        # 2. resume_bullets: bullets con foreign key experience_id
+        # 3. education_entries: historial educativo y certificaciones
         # ----------------------------------------------------------------------
+        cursor.execute("PRAGMA table_info(resume_bullets);")
+        cols_b = [col[1] for col in cursor.fetchall()]
+        if cols_b and "section" in cols_b:
+            cursor.execute("DROP TABLE IF EXISTS resume_bullets;")
+            cursor.execute("DROP TABLE IF EXISTS experience_entries;")
+            cursor.execute("DROP TABLE IF EXISTS education_entries;")
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS experience_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company TEXT NOT NULL,
+            position TEXT NOT NULL,
+            start_date TEXT,
+            end_date TEXT,
+            is_current INTEGER DEFAULT 0,
+            order_index INTEGER DEFAULT 0
+        );
+        """)
+
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS resume_bullets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            section TEXT NOT NULL,
+            experience_id INTEGER NOT NULL,
+            bullet_text TEXT NOT NULL,
             original_text TEXT NOT NULL,
             current_text TEXT NOT NULL,
+            order_index INTEGER DEFAULT 0,
+            FOREIGN KEY (experience_id) REFERENCES experience_entries (id) ON DELETE CASCADE
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS education_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            institution TEXT NOT NULL,
+            credential TEXT NOT NULL,
+            start_date TEXT,
+            end_date TEXT,
             order_index INTEGER DEFAULT 0
         );
         """)
 
         conn.commit()
 
-    # Sembrar datos de ejemplo si la tabla está vacía
+    # Sembrar datos de ejemplo si la tabla de experiencia está vacía
     seed_default_resume_bullets()
 
 
@@ -827,47 +858,82 @@ def delete_user_skill(skill_id: int) -> bool:
 
 
 # ==============================================================================
-# FASE 5.6a: FUNCIONES PARA RESUME BULLETS (CV BUILDER)
+# FASE 5.6a & 5.7: FUNCIONES PARA EXPERIENCIA, BULLETS Y EDUCACIÓN (CV BUILDER & RESUME PARSER)
 # ==============================================================================
 
 def seed_default_resume_bullets():
     """
-    Inserta bullets iniciales de ejemplo si la tabla resume_bullets está vacía.
+    Inserta experiencia, bullets y educación de ejemplo si experience_entries está vacía.
     Permite probar el CV Builder de inmediato con datos realistas basados en el perfil del usuario.
     """
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM resume_bullets;")
+            cursor.execute("SELECT COUNT(*) FROM experience_entries;")
             count = cursor.fetchone()[0]
             if count == 0:
-                default_bullets = [
+                # 1. Experiencia 1
+                cursor.execute(
+                    """
+                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    ("NTT Data / Citibank", "Unix L3 Senior Systems Administrator", "2021-06", None, 1, 1)
+                )
+                exp1_id = cursor.lastrowid
+
+                bullets_exp1 = [
                     (
-                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        exp1_id,
+                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
                         "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
                         "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
                         1
                     ),
                     (
-                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        exp1_id,
+                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
                         "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
                         "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
                         2
                     ),
                     (
-                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        exp1_id,
+                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
                         "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
                         "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
                         3
-                    ),
+                    )
+                ]
+                cursor.executemany(
+                    """
+                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
+                    VALUES (?, ?, ?, ?, ?);
+                    """,
+                    bullets_exp1
+                )
+
+                # 2. Experiencia 2
+                cursor.execute(
+                    """
+                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    ("Experiencia Previa", "Senior Linux & Infrastructure Specialist", "2018-01", "2021-05", 0, 2)
+                )
+                exp2_id = cursor.lastrowid
+
+                bullets_exp2 = [
                     (
-                        "Senior Linux & Infrastructure Specialist - Experiencia Previa",
+                        exp2_id,
+                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
                         "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
                         "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
                         1
                     ),
                     (
-                        "Senior Linux & Infrastructure Specialist - Experiencia Previa",
+                        exp2_id,
+                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
                         "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
                         "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
                         2
@@ -875,40 +941,177 @@ def seed_default_resume_bullets():
                 ]
                 cursor.executemany(
                     """
-                    INSERT INTO resume_bullets (section, original_text, current_text, order_index)
-                    VALUES (?, ?, ?, ?);
+                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
+                    VALUES (?, ?, ?, ?, ?);
                     """,
-                    default_bullets
+                    bullets_exp2
                 )
+
+                # 3. Educación de ejemplo
+                cursor.execute("SELECT COUNT(*) FROM education_entries;")
+                count_edu = cursor.fetchone()[0]
+                if count_edu == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
+                        VALUES (?, ?, ?, ?, ?);
+                        """,
+                        ("Universidad Técnica / Instituto Tecnológico", "Ingeniería en Sistemas / Computación", "2013-01", "2017-12", 1)
+                    )
+
                 conn.commit()
     except Exception as e:
         print(f"Aviso al sembrar resume_bullets: {e}")
 
 
-def get_all_resume_bullets() -> List[Dict[str, Any]]:
+# ------------------------------------------------------------------------------
+# EXPERIENCIA LABORAL (experience_entries)
+# ------------------------------------------------------------------------------
+
+def get_all_experiences() -> List[Dict[str, Any]]:
     """
-    Obtiene todos los bullets del CV ordenados por sección, order_index e id.
+    Retorna todas las experiencias laborales registradas ordenadas por order_index e id.
     """
-    query = "SELECT * FROM resume_bullets ORDER BY section ASC, order_index ASC, id ASC;"
+    query = "SELECT * FROM experience_entries ORDER BY order_index ASC, id ASC;"
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query)
         return [dict(row) for row in cursor.fetchall()]
 
 
-def add_resume_bullet(section: str, original_text: str, current_text: Optional[str] = None, order_index: int = 0) -> int:
+def add_experience_entry(
+    company: str,
+    position: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    is_current: bool = False,
+    order_index: int = 0
+) -> int:
     """
-    Inserta un nuevo bullet en una sección del CV y retorna su ID generado en SQLite.
+    Inserta una nueva experiencia laboral estructurada y retorna su ID generado.
     """
-    if current_text is None:
-        current_text = original_text
     query = """
-    INSERT INTO resume_bullets (section, original_text, current_text, order_index)
-    VALUES (?, ?, ?, ?);
+    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
+    VALUES (?, ?, ?, ?, ?, ?);
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (section.strip(), original_text.strip(), current_text.strip(), order_index))
+        cursor.execute(
+            query,
+            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, order_index)
+        )
+        conn.commit()
+        return cursor.lastrowid or 0
+
+
+def update_experience_entry(
+    experience_id: int,
+    company: str,
+    position: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    is_current: bool = False
+) -> bool:
+    """
+    Actualiza los datos de una experiencia laboral.
+    """
+    query = """
+    UPDATE experience_entries
+    SET company = ?, position = ?, start_date = ?, end_date = ?, is_current = ?
+    WHERE id = ?;
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            query,
+            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, experience_id)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_experience_entry(experience_id: int) -> bool:
+    """
+    Elimina una experiencia laboral y en cascada todos sus bullets asociados.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON;")
+        cursor.execute("DELETE FROM resume_bullets WHERE experience_id = ?;", (experience_id,))
+        cursor.execute("DELETE FROM experience_entries WHERE id = ?;", (experience_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ------------------------------------------------------------------------------
+# BULLETS DE LOGROS (resume_bullets)
+# ------------------------------------------------------------------------------
+
+def get_all_resume_bullets() -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los bullets del CV ordenados por la experiencia correspondiente y order_index.
+    Para compatibilidad hacia atrás y soporte del CV Builder, sintetiza el campo 'section'
+    como 'position - company' e incluye company, position y fechas.
+    """
+    query = """
+    SELECT 
+        b.id,
+        b.experience_id,
+        (e.position || ' - ' || e.company) AS section,
+        e.company,
+        e.position,
+        e.start_date,
+        e.end_date,
+        e.is_current,
+        b.bullet_text,
+        b.original_text,
+        b.current_text,
+        b.order_index
+    FROM resume_bullets b
+    JOIN experience_entries e ON b.experience_id = e.id
+    ORDER BY e.order_index ASC, e.id ASC, b.order_index ASC, b.id ASC;
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_bullets_by_experience(experience_id: int) -> List[Dict[str, Any]]:
+    """
+    Obtiene los bullets de una experiencia específica.
+    """
+    query = """
+    SELECT * FROM resume_bullets
+    WHERE experience_id = ?
+    ORDER BY order_index ASC, id ASC;
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (experience_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def add_resume_bullet(
+    experience_id: int,
+    bullet_text: str,
+    original_text: Optional[str] = None,
+    current_text: Optional[str] = None,
+    order_index: int = 0
+) -> int:
+    """
+    Inserta un nuevo bullet asociado a una experiencia laboral.
+    """
+    b_txt = bullet_text.strip()
+    orig = (original_text or b_txt).strip()
+    curr = (current_text or b_txt).strip()
+    query = """
+    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
+    VALUES (?, ?, ?, ?, ?);
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (experience_id, b_txt, orig, curr, order_index))
         conn.commit()
         return cursor.lastrowid or 0
 
@@ -917,10 +1120,10 @@ def update_resume_bullet(bullet_id: int, current_text: str) -> bool:
     """
     Actualiza el texto actual (current_text) de un bullet específico tras ser aceptado por el usuario.
     """
-    query = "UPDATE resume_bullets SET current_text = ? WHERE id = ?;"
+    query = "UPDATE resume_bullets SET current_text = ?, bullet_text = ? WHERE id = ?;"
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, (current_text.strip(), bullet_id))
+        cursor.execute(query, (current_text.strip(), current_text.strip(), bullet_id))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -935,6 +1138,147 @@ def delete_resume_bullet(bullet_id: int) -> bool:
         cursor.execute(query, (bullet_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+# ------------------------------------------------------------------------------
+# EDUCACIÓN Y CERTIFICACIONES (education_entries)
+# ------------------------------------------------------------------------------
+
+def get_all_education() -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los registros de educación y certificaciones.
+    """
+    query = "SELECT * FROM education_entries ORDER BY order_index ASC, id ASC;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def add_education_entry(
+    institution: str,
+    credential: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    order_index: int = 0
+) -> int:
+    """
+    Inserta un registro de educación o certificación.
+    """
+    query = """
+    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
+    VALUES (?, ?, ?, ?, ?);
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, order_index))
+        conn.commit()
+        return cursor.lastrowid or 0
+
+
+def update_education_entry(
+    education_id: int,
+    institution: str,
+    credential: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> bool:
+    """
+    Actualiza un registro de educación.
+    """
+    query = """
+    UPDATE education_entries
+    SET institution = ?, credential = ?, start_date = ?, end_date = ?
+    WHERE id = ?;
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, education_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_education_entry(education_id: int) -> bool:
+    """
+    Elimina un registro de educación por su ID.
+    """
+    query = "DELETE FROM education_entries WHERE id = ?;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (education_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ------------------------------------------------------------------------------
+# GUARDADO EN BULK TRAS REVISIÓN DE RESUME PARSER (Fase 5.7)
+# ------------------------------------------------------------------------------
+
+def save_parsed_resume_data(
+    experience_list: List[Dict[str, Any]],
+    education_list: List[Dict[str, Any]],
+    replace_existing: bool = True
+) -> bool:
+    """
+    Persiste en una sola transacción limpia los datos de experiencia laboral,
+    sus bullets asociados y la educación extraída y confirmada por el usuario.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if replace_existing:
+            cursor.execute("DELETE FROM resume_bullets;")
+            cursor.execute("DELETE FROM experience_entries;")
+            cursor.execute("DELETE FROM education_entries;")
+
+        # Inserción de experiencia y bullets
+        for idx_exp, exp in enumerate(experience_list, start=1):
+            comp = str(exp.get("company", "Empresa")).strip()
+            pos = str(exp.get("position", "Puesto")).strip()
+            s_date = exp.get("start_date")
+            e_date = exp.get("end_date")
+            is_cur = 1 if exp.get("is_current") else 0
+            order_idx = exp.get("order_index", idx_exp)
+
+            cursor.execute(
+                """
+                INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
+                VALUES (?, ?, ?, ?, ?, ?);
+                """,
+                (comp, pos, s_date, e_date, is_cur, order_idx)
+            )
+            exp_id = cursor.lastrowid
+
+            bullets = exp.get("bullets", [])
+            for idx_b, b_text in enumerate(bullets, start=1):
+                clean_b = str(b_text).strip()
+                if clean_b:
+                    cursor.execute(
+                        """
+                        INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
+                        VALUES (?, ?, ?, ?, ?);
+                        """,
+                        (exp_id, clean_b, clean_b, clean_b, idx_b)
+                    )
+
+        # Inserción de educación
+        for idx_edu, edu in enumerate(education_list, start=1):
+            inst = str(edu.get("institution", "Institución")).strip()
+            cred = str(edu.get("credential", "Título / Certificación")).strip()
+            s_date = edu.get("start_date")
+            e_date = edu.get("end_date")
+            order_idx = edu.get("order_index", idx_edu)
+
+            if inst or cred:
+                cursor.execute(
+                    """
+                    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
+                    VALUES (?, ?, ?, ?, ?);
+                    """,
+                    (inst, cred, s_date, e_date, order_idx)
+                )
+
+        conn.commit()
+        return True
 
 
 

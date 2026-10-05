@@ -70,16 +70,124 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
     return genai.GenerativeModel("gemini-1.5-flash-latest", generation_config={"temperature": 0.2})
 
 
+
+# ------------------------------------------------------------------------------
+# FASE 5.7: NORMALIZACIÓN DE FECHAS DE RESUME
+# ------------------------------------------------------------------------------
+
+MONTH_MAP: Dict[str, str] = {
+    # English
+    "jan": "01", "january": "01",
+    "feb": "02", "february": "02",
+    "mar": "03", "march": "03",
+    "apr": "04", "april": "04",
+    "may": "05",
+    "jun": "06", "june": "06",
+    "jul": "07", "july": "07",
+    "aug": "08", "august": "08",
+    "sep": "09", "sept": "09", "september": "09",
+    "oct": "10", "october": "10",
+    "nov": "11", "november": "11",
+    "dec": "12", "december": "12",
+    # Spanish
+    "ene": "01", "enero": "01",
+    "febrero": "02",
+    "marzo": "03",
+    "abr": "04", "abril": "04",
+    "mayo": "05",
+    "junio": "06",
+    "julio": "07",
+    "ago": "08", "agosto": "08",
+    "set": "09", "setiembre": "09", "septiembre": "09",
+    "octubre": "10",
+    "noviembre": "11",
+    "dic": "12", "diciembre": "12",
+}
+
+
+def normalize_resume_date(raw_date: Optional[str]) -> Optional[str]:
+    """
+    Normaliza fechas de texto libre procedentes del currículum a formato ISO 'YYYY-MM'.
+    Si el valor no se puede determinar con certeza o es inválido, retorna None
+    para que el usuario lo revise y complete manualmente en la pantalla de revisión.
+    
+    Formatos soportados:
+    - YYYY-MM-DD / YYYY/MM/DD -> YYYY-MM
+    - DD/MM/YYYY / DD-MM-YYYY -> YYYY-MM
+    - YYYY-MM / YYYY/MM       -> YYYY-MM
+    - MM/YYYY / MM-YYYY       -> YYYY-MM
+    - 'June 2021', '06/2021', 'Junio 2021', 'Jun. 2021' -> YYYY-06
+    - '2021'                  -> YYYY-01
+    """
+    if not raw_date or not isinstance(raw_date, str):
+        return None
+    s = raw_date.strip().lower().replace('.', '').replace(',', '')
+    if not s or s in ("none", "null", "n/a", "-", "actualidad", "present", "current", "presente"):
+        return None
+
+    # YYYY-MM-DD o YYYY/MM/DD
+    m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", s)
+    if m:
+        y, mo, _ = m.groups()
+        if 1 <= int(mo) <= 12:
+            return f"{y}-{int(mo):02d}"
+
+    # DD/MM/YYYY o DD-MM-YYYY
+    m = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", s)
+    if m:
+        _, mo, y = m.groups()
+        if 1 <= int(mo) <= 12:
+            return f"{y}-{int(mo):02d}"
+
+    # YYYY-MM o YYYY/MM
+    m = re.match(r"^(\d{4})[-/](\d{1,2})$", s)
+    if m:
+        y, mo = m.groups()
+        if 1 <= int(mo) <= 12:
+            return f"{y}-{int(mo):02d}"
+
+    # MM/YYYY o MM-YYYY
+    m = re.match(r"^(\d{1,2})[-/](\d{4})$", s)
+    if m:
+        mo, y = m.groups()
+        if 1 <= int(mo) <= 12:
+            return f"{y}-{int(mo):02d}"
+
+    # NombreMes (DD) YYYY
+    m = re.match(r"^([a-z]+)\s+(?:\d{1,2}\s+)?(\d{4})$", s)
+    if m:
+        word, y = m.groups()
+        if word in MONTH_MAP:
+            return f"{y}-{MONTH_MAP[word]}"
+
+    # (DD) NombreMes YYYY
+    m = re.match(r"^(?:\d{1,2}\s+)?([a-z]+)\s+(\d{4})$", s)
+    if m:
+        word, y = m.groups()
+        if word in MONTH_MAP:
+            return f"{y}-{MONTH_MAP[word]}"
+
+    # YYYY únicamente
+    m = re.match(r"^(\d{4})$", s)
+    if m:
+        return f"{m.group(1)}-01"
+
+    return None
+
+
 def extract_skills_and_profile_from_resume(resume_text: str, api_key: Optional[str] = None) -> Dict[str, Any]:
     """
-    Envía el texto del currículum al LLM con un prompt estrictamente formateado
-    para extraer información del perfil y clasificar las habilidades en un JSON estructurado.
+    Envía el texto del currículum al LLM en un único pase para extraer:
+    1. Perfil del usuario (nombre, título, email, teléfono, resumen)
+    2. Habilidades clasificadas por categoría estándar (Master Skill Profile)
+    3. Experiencia laboral completa (empresa, cargo, fechas raw y bullets de impacto)
+    4. Formación académica y certificaciones (institución, título, fechas raw)
     
     Técnicas aplicadas:
     - Zero-shot / Structured schema instruction
-    - Lista blanca forzada de 14 categorías estándar
+    - Lista blanca forzada de categorías estándar
     - Cascada de modelos (gemini-3.5-flash -> 3.6 -> 3.8 -> latest)
-    - Parseo defensivo de JSON con manejo de excepciones
+    - Parseo defensivo y normalización de fechas a ISO 'YYYY-MM'
     """
     key = api_key or get_api_key()
     if not key:
@@ -94,9 +202,11 @@ def extract_skills_and_profile_from_resume(resume_text: str, api_key: Optional[s
 
     prompt = f"""
 Eres un reclutador técnico senior y experto en análisis de perfiles de tecnología.
-Tu tarea es analizar el siguiente texto extraído de un currículum vitae (Resume/CV) y extraer:
+Tu tarea es analizar el siguiente texto extraído de un currículum vitae (Resume/CV) y extraer de forma estructurada:
 1. Datos generales del profesional (Nombre completo, título actual, email, teléfono, ubicación y un breve resumen).
 2. Todas las tecnologías, herramientas, metodologías, certificaciones y habilidades blandas identificadas.
+3. Historial de experiencia laboral completa (empresa, cargo/puesto, fechas de inicio y fin, y viñetas/bullets de logros o responsabilidades).
+4. Formación académica, títulos, grados o certificaciones relevantes (institución, título, fechas).
 
 CATEGORÍAS PERMITIDAS PARA CADA HABILIDAD:
 Debes clasificar OBLIGATORIAMENTE cada habilidad en exactamente una de estas categorías:
@@ -107,6 +217,10 @@ NIVELES DE PROFICIENCY PERMITIDOS:
 - "Intermediate": uso regular profesional comprobable en proyectos.
 - "Advanced": 4+ años de experiencia, roles de liderazgo, arquitectura o especialidad principal.
 Si no puedes determinar con certeza el nivel, asigna "Intermediate".
+
+REGLAS DE EXTRACCIÓN DE FECHAS:
+- Para start_date_raw y end_date_raw, transcribe el texto tal como figura en el documento (ej. "June 2021", "06/2021", "2018", etc.).
+- Si la posición es el trabajo actual o sigue en curso, en end_date_raw escribe "Present".
 
 REGLAS ESTRICTAS DE RESPUESTA:
 - Responde ÚNICAMENTE con un objeto JSON válido.
@@ -127,6 +241,26 @@ REGLAS ESTRICTAS DE RESPUESTA:
       "skill_name": "Nombre de la tecnología/herramienta (ej. Linux, AWS, Docker, Python)",
       "category": "Una de las categorías permitidas arriba",
       "proficiency": "Beginner, Intermediate o Advanced"
+    }}
+  ],
+  "experience": [
+    {{
+      "company": "Nombre de la empresa u organización",
+      "position": "Cargo o puesto desempeñado",
+      "start_date_raw": "Fecha de inicio tal como aparece en el CV",
+      "end_date_raw": "Fecha de fin tal como aparece o 'Present'",
+      "bullets": [
+        "Descripción concisa del logro o responsabilidad 1",
+        "Descripción concisa del logro o responsabilidad 2"
+      ]
+    }}
+  ],
+  "education": [
+    {{
+      "institution": "Universidad, instituto o entidad de certificación",
+      "credential": "Título, grado, carrera o certificación obtenida",
+      "start_date_raw": "Fecha de inicio o vacía",
+      "end_date_raw": "Fecha de fin / graduación o vacía"
     }}
   ]
 }}
@@ -181,15 +315,12 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
     # --------------------------------------------------------------------------
     # PARSEO DEFENSIVO DE JSON
     # --------------------------------------------------------------------------
-    # Eliminamos posibles backticks de markdown que el modelo pudiera añadir
     texto_limpio = raw_text
     if texto_limpio.startswith("```"):
-        # Eliminamos primera línea (ej. ```json) y última línea (```)
         lineas = texto_limpio.splitlines()
         if len(lineas) >= 2:
             texto_limpio = "\n".join(lineas[1:-1])
 
-    # Intentamos encontrar el primer '{' y el último '}'
     inicio_json = texto_limpio.find("{")
     fin_json = texto_limpio.rfind("}")
     if inicio_json != -1 and fin_json != -1:
@@ -201,22 +332,20 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
         logger.error(f"Error decodificando JSON del LLM: {err}\nTexto recibido:\n{raw_text}")
         raise ValueError(f"La IA no devolvió un JSON válido. Error: {str(err)}")
 
-    # Validamos estructura mínima esperada
     if not isinstance(data, dict):
         raise ValueError("El resultado de la IA no es un diccionario JSON.")
 
-    if "profile" not in data:
+    if "profile" not in data or not isinstance(data["profile"], dict):
         data["profile"] = {}
     if "skills" not in data or not isinstance(data["skills"], list):
         data["skills"] = []
 
-    # Validamos que cada skill tenga su categoría dentro de las permitidas
+    # Validamos habilidades
     skills_validas = []
     for s in data["skills"]:
         if isinstance(s, dict) and s.get("skill_name"):
             cat = s.get("category", "")
             if cat not in SKILL_CATEGORIES:
-                # Si el LLM inventó una categoría parecida, fallback a una razonable
                 cat = "DevOps"
             prof = s.get("proficiency", "Intermediate")
             if prof not in ["Beginner", "Intermediate", "Advanced"]:
@@ -226,9 +355,74 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
                 "category": cat,
                 "proficiency": prof
             })
-
     data["skills"] = skills_validas
+
+    # --------------------------------------------------------------------------
+    # NORMALIZACIÓN DE EXPERIENCIA LABORAL Y FECHAS (Fase 5.7)
+    # --------------------------------------------------------------------------
+    current_keywords = ["present", "presente", "actualidad", "current", "now", "hoy", "en curso", "ongoing"]
+    exp_limpia = []
+    for raw_exp in data.get("experience", []):
+        if isinstance(raw_exp, dict) and (raw_exp.get("company") or raw_exp.get("position")):
+            comp = str(raw_exp.get("company") or "Empresa").strip()
+            pos = str(raw_exp.get("position") or "Puesto").strip()
+            s_raw = str(raw_exp.get("start_date_raw") or "").strip()
+            e_raw = str(raw_exp.get("end_date_raw") or "").strip()
+
+            is_cur = False
+            e_lower = e_raw.lower()
+            if not e_raw or any(k in e_lower for k in current_keywords):
+                is_cur = True
+                norm_end = None
+            else:
+                norm_end = normalize_resume_date(e_raw)
+
+            norm_start = normalize_resume_date(s_raw) if s_raw else None
+
+            bullets_raw = raw_exp.get("bullets", [])
+            bullets_limpios = []
+            if isinstance(bullets_raw, list):
+                for b in bullets_raw:
+                    if isinstance(b, str) and b.strip():
+                        bullets_limpios.append(b.strip())
+                    elif isinstance(b, dict) and b.get("text"):
+                        bullets_limpios.append(str(b["text"]).strip())
+
+            exp_limpia.append({
+                "company": comp,
+                "position": pos,
+                "start_date_raw": s_raw,
+                "end_date_raw": e_raw,
+                "start_date": norm_start,
+                "end_date": norm_end,
+                "is_current": is_cur,
+                "bullets": bullets_limpios
+            })
+    data["experience"] = exp_limpia
+
+    # --------------------------------------------------------------------------
+    # NORMALIZACIÓN DE EDUCACIÓN (Fase 5.7)
+    # --------------------------------------------------------------------------
+    edu_limpia = []
+    for raw_edu in data.get("education", []):
+        if isinstance(raw_edu, dict) and (raw_edu.get("institution") or raw_edu.get("credential")):
+            inst = str(raw_edu.get("institution") or "").strip()
+            cred = str(raw_edu.get("credential") or "").strip()
+            s_raw = str(raw_edu.get("start_date_raw") or "").strip()
+            e_raw = str(raw_edu.get("end_date_raw") or "").strip()
+
+            edu_limpia.append({
+                "institution": inst,
+                "credential": cred,
+                "start_date_raw": s_raw,
+                "end_date_raw": e_raw,
+                "start_date": normalize_resume_date(s_raw) if s_raw else None,
+                "end_date": normalize_resume_date(e_raw) if e_raw else None
+            })
+    data["education"] = edu_limpia
+
     return data
+
 
 
 def analyze_job_description(
