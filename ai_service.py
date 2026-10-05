@@ -233,19 +233,21 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
 
 def analyze_job_description(
     job_text: str,
-    user_skills: list,
-    api_key: Optional[str] = None
+    user_skills: Optional[list] = None,
+    api_key: Optional[str] = None,
+    candidate_text: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Analiza una descripción de puesto (Job Description) y la compara contra
-    el Master Skill Profile del usuario en SQLite.
+    Analiza una descripción de puesto (Job Description) y la compara contra:
+    - El Master Skill Profile del usuario (si se pasa user_skills, Fase 5.2), O BIEN
+    - El contenido completo del Resume/CV actual (si se pasa candidate_text, Fase 5.6b).
     
     Extrae:
     1. Metadatos de la vacante (empresa, posición, modalidad, ubicación, salario).
     2. Clasificación de habilidades en 3 categorías consensuadas:
-       - strong_matches: Habilidades que el usuario domina (Intermediate / Advanced).
-       - partial_matches: Habilidades que el usuario tiene pero a nivel inicial (Beginner).
-       - missing_skills: Tecnologías y requisitos demandados que el usuario no tiene registrados.
+       - strong_matches: Habilidades que el candidato domina / evidencia en su CV.
+       - partial_matches: Habilidades presentes con nivel inicial o mención básica.
+       - missing_skills: Tecnologías y requisitos demandados que no están en el perfil/CV.
     
     Implementa:
     - Cascada de modelos Gemini para evitar errores 404/503.
@@ -260,21 +262,31 @@ def analyze_job_description(
 
     genai.configure(api_key=key)
 
-    # Formatear el Master Skill Profile del usuario para el prompt
-    skills_formateadas = []
-    for s in user_skills:
-        nombre = s.get("skill_name", "")
-        categoria = s.get("category", "General")
-        nivel = s.get("proficiency", "Intermediate")
-        skills_formateadas.append(f"- {nombre} ({categoria}) | Nivel: {nivel}")
+    # Determinar si el insumo es texto libre del CV o lista de habilidades estructuradas
+    if candidate_text and candidate_text.strip():
+        texto_skills_perfil = candidate_text.strip()
+        label_perfil = "EXPERIENCIA Y CONTENIDO ACTUAL DEL RESUME / CV DEL CANDIDATO"
+    else:
+        # Formatear el Master Skill Profile del usuario para el prompt
+        skills_formateadas = []
+        if user_skills:
+            for s in user_skills:
+                if isinstance(s, dict):
+                    nombre = s.get("skill_name", "")
+                    categoria = s.get("category", "General")
+                    nivel = s.get("proficiency", "Intermediate")
+                    skills_formateadas.append(f"- {nombre} ({categoria}) | Nivel: {nivel}")
+                elif isinstance(s, str):
+                    skills_formateadas.append(f"- {s}")
 
-    texto_skills_perfil = "\n".join(skills_formateadas) if skills_formateadas else "No hay habilidades registradas en el perfil aún."
+        texto_skills_perfil = "\n".join(skills_formateadas) if skills_formateadas else "No hay habilidades registradas en el perfil aún."
+        label_perfil = "PERFIL DE HABILIDADES DEL CANDIDATO (Master Skill Profile)"
 
     prompt = f"""
 Eres un reclutador técnico senior y experto en evaluación de talento tech y perfiles corporativos.
-Tu tarea es analizar la siguiente descripción de vacante laboral (Job Description) y compararla minuciosamente contra el perfil de habilidades del candidato (Master Skill Profile).
+Tu tarea es analizar la siguiente descripción de vacante laboral (Job Description) y compararla minuciosamente contra el perfil/CV del candidato.
 
-PERFIL DE HABILIDADES DEL CANDIDATO (Master Skill Profile):
+{label_perfil}:
 \"\"\"
 {texto_skills_perfil}
 \"\"\"
@@ -484,7 +496,8 @@ def generate_skill_gaps_study(
     missing_skills: list,
     position: str,
     company: str,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    language: str = "es"
 ) -> List[Dict[str, Any]]:
     """
     Genera el análisis de brechas (Skill Gaps Study) estructurado:
@@ -503,7 +516,51 @@ def generate_skill_gaps_study(
 
     skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else str(missing_skills)
 
-    prompt = f"""
+    if language == "en":
+        prompt = f"""
+You are a Lead Solutions Architect and Senior Technical Recruiter preparing a candidate for a technical interview.
+The candidate is applying for the role of '{position}' at '{company}'.
+The vacancy requires the following missing skills or technologies:
+{skills_str}
+
+Analyze each missing skill and return a JSON array.
+CRITICAL RULE: Do NOT generate URLs, links, or specific course names.
+
+For EACH skill in the list, return an object with EXACTLY these fields:
+- "skill": Name of the skill or technology.
+- "importance": "Required" or "Nice-to-have".
+- "context": Brief explanation (1-2 sentences in English) of why this role requires it.
+- "category": MUST be one of these exact 10 categories:
+    * Operating Systems
+    * Cloud & Virtualization
+    * CI/CD & DevOps
+    * Databases
+    * Security
+    * Identity & Access Management
+    * Programming & Scripting
+    * Monitoring
+    * Collaboration & ITSM
+    * Business/Soft Skills
+- "key_concepts": Express summary (2 sentences in English) of key terms, architecture, and commands the candidate must mention in an interview.
+
+OUTPUT RULES:
+- Output MUST BE ENTIRELY IN ENGLISH.
+- Respond ONLY with a valid JSON array of objects.
+- Do NOT add conversational text or markdown explanation outside the JSON block.
+
+Exact format example:
+[
+  {{
+    "skill": "Kubernetes",
+    "importance": "Required",
+    "context": "The core of the platform runs on Kubernetes, requiring production-level operational experience.",
+    "category": "CI/CD & DevOps",
+    "key_concepts": "Understand Pods, Deployments, Services, Ingress, and how to troubleshoot with kubectl logs and describe."
+  }}
+]
+"""
+    else:
+        prompt = f"""
 Eres un Lead Architect y reclutador técnico senior preparando a un candidato para una entrevista.
 El candidato postula al rol de '{position}' en '{company}'.
 En el análisis de la vacante se detectaron las siguientes habilidades o tecnologías faltantes (missing skills):
@@ -530,6 +587,7 @@ Para CADA skill en la lista anterior, devuelve un objeto con ESTRICTAMENTE estos
 - "key_concepts": Resumen exprés (2 oraciones) de qué conceptos o términos clave indispensables debe mencionar el candidato para defenderse con solvencia técnica en la entrevista.
 
 REGLAS DE SALIDA:
+- La salida DEBE ESTAR COMPLETAMENTE EN ESPAÑOL.
 - Responde ÚNICAMENTE con un array JSON válido de objetos.
 - NO agregues explicaciones fuera del bloque JSON.
 
@@ -630,7 +688,8 @@ def generate_interview_questions(
     app_skills: list,
     user_skills: list,
     notes: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    language: str = "es"
 ) -> list:
     """
     Genera de 5 a 8 preguntas de entrevista técnica y situacional personalizadas,
@@ -648,7 +707,39 @@ def generate_interview_questions(
     # Resumen de habilidades del candidato
     candidato_skills_str = ", ".join(f"{s.get('skill_name')} ({s.get('proficiency')})" for s in user_skills[:25]) if user_skills else "Perfil general de TI"
 
-    prompt = f"""
+    if language == "en":
+        prompt = f"""
+You are an expert Technical Hiring Manager and seasoned interviewer evaluating tech candidates.
+You will prepare a battery of 6 interview questions for a candidate applying to:
+- Role: {position}
+- Company: {company}
+- Job Required Skills: {vacante_skills_str}
+- Candidate's Declared Experience & Skills: {candidato_skills_str}
+- Additional Notes: {notes or 'N/A'}
+
+DISTRIBUTION RULES FOR THE 6 QUESTIONS:
+1. Two (2) technical questions on the candidate's core strengths (validating deep production-level expertise).
+2. Two (2) questions on technologies or concepts where the role requires experience but the candidate has skill gaps or beginner proficiency (evaluating fundamentals, curiosity, and adaptability).
+3. Two (2) situational, architectural or incident resolution questions (Troubleshooting / STAR methodology).
+
+OUTPUT RULES:
+- The entire output MUST BE IN ENGLISH (questions, tips, categories).
+- Respond ONLY with a valid JSON array of objects.
+- Do NOT include conversational text or explanation outside the JSON array.
+- Follow strictly this structure:
+
+[
+  {{
+    "id": 1,
+    "category": "Technical Strength | Skill Gap | Troubleshooting / Incident | Situational STAR",
+    "focus_skill": "Technology or evaluated concept",
+    "question": "Detailed and realistic interview question...",
+    "tip": "What the interviewer is listening for to evaluate successfully"
+  }}
+]
+"""
+    else:
+        prompt = f"""
 Eres un Hiring Manager y entrevistador técnico experto en perfiles tecnológicos.
 Vas a preparar una batería de 6 preguntas de entrevista para el candidato que postula a:
 - Puesto: {position}
@@ -663,6 +754,7 @@ REGLAS DE DISTRIBUCIÓN DE LAS 6 PREGUNTAS:
 3. Dos (2) preguntas situacionales, de arquitectura o resolución de incidentes (Troubleshooting / Metodología STAR).
 
 REGLAS DE SALIDA:
+- La salida DEBE ESTAR COMPLETAMENTE EN ESPAÑOL.
 - Responde ÚNICAMENTE con un array JSON válido de objetos.
 - NO agregues texto conversacional ni explicaciones fuera del JSON.
 - Sigue exactamente esta estructura:
@@ -745,7 +837,8 @@ def evaluate_interview_answer(
     category: str,
     focus_skill: str,
     user_answer: str,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    language: str = "es"
 ) -> dict:
     """
     Evalúa la respuesta de un candidato a una pregunta de entrevista técnica.
@@ -757,7 +850,45 @@ def evaluate_interview_answer(
 
     genai.configure(api_key=key)
 
-    prompt = f"""
+    if language == "en":
+        prompt = f"""
+You are an expert technical interviewer and career coach evaluating a candidate's answer.
+
+INTERVIEW QUESTION:
+\"{question}\"
+Category: {category} | Focus Skill: {focus_skill}
+
+CANDIDATE ANSWER:
+\"\"\"
+{user_answer}
+\"\"\"
+
+Your task is to evaluate the response and return a JSON object with constructive, actionable feedback.
+If the question is about Troubleshooting or Incident Management, recommend a structured methodology such as:
+"Identify -> Investigate -> Remediate -> Validate -> Document" or STAR (Situation, Task, Action, Result).
+
+FORMAT RULES:
+- The entire feedback MUST BE IN ENGLISH.
+- Respond ONLY with a valid JSON object.
+- Do NOT include text outside the JSON block.
+- Follow strictly this structure:
+
+{{
+  "rating": "🌟 Excellent | 👍 Good (with areas to improve) | ⚠️ Needs more depth",
+  "strengths": [
+    "Key strength 1 of the answer",
+    "Key strength 2"
+  ],
+  "areas_to_improve": [
+    "Aspect that lacked depth or precision",
+    "Key technical concept omitted"
+  ],
+  "suggested_framework": "Recommended structure to answer this type of question",
+  "model_answer": "Concise senior-level model answer demonstrating high impact (max 2 paragraphs)"
+}}
+"""
+    else:
+        prompt = f"""
 Eres un entrevistador técnico y coach de carrera evaluando la respuesta de un candidato.
 
 PREGUNTA DE LA ENTREVISTA:
@@ -774,6 +905,7 @@ Si la pregunta es de Troubleshooting o incidentes, sugiere una estructura estruc
 "Identify -> Investigate -> Remediate -> Validate -> Document" o STAR (Situación, Tarea, Acción, Resultado).
 
 REGLAS DE FORMATO:
+- La evaluación DEBE ESTAR COMPLETAMENTE EN ESPAÑOL.
 - Responde ÚNICAMENTE con un objeto JSON válido.
 - NO agregues texto fuera del JSON.
 - Sigue exactamente esta estructura:
@@ -895,6 +1027,125 @@ def generar_sugerencia_curso(
 
     # FreeCodeCamp (por defecto para IT, Cloud y Programación)
     return ("Busca cursos gratuitos en FreeCodeCamp", f"https://www.freecodecamp.org/news/search/?query={query}")
+
+
+# ==============================================================================
+# FASE 5.6a: CV BUILDER - REESCRITURA HÍBRIDA DE BULLETS
+# ==============================================================================
+
+def rewrite_resume_bullet(
+    current_bullet: str,
+    job_description: Optional[str] = None,
+    api_key: Optional[str] = None
+) -> str:
+    """
+    Reescribe un bullet de experiencia laboral usando un enfoque híbrido:
+    
+    1. Si job_description está VACÍO (mejora general):
+       Aplica la Fórmula de Impacto de Google:
+       Acción (Qué hiciste) + Contexto/Herramientas (Cómo lo hiciste) + Métricas (Impacto medible).
+       
+    2. Si job_description TIENE TEXTO (mejora específica):
+       Reescribe el bullet destacando palabras clave relevantes y requerimientos
+       de la vacante suministrada.
+       
+    IMPORTANTE: Esta función no devuelve Match Score ni listados de keywords.
+    Se enfoca exclusivamente en la reescritura de alta calidad del bullet individual.
+    """
+    bullet_clean = (current_bullet or "").strip()
+    if not bullet_clean:
+        return ""
+
+    has_jd = bool(job_description and job_description.strip())
+    jd_clean = job_description.strip() if has_jd else ""
+
+    # --------------------------------------------------------------------------
+    # TODO (Fase 5a / Integración Real con LLM):
+    # Aquí se conecta la llamada real con la API de Gemini utilizando:
+    #
+    # active_key = api_key or get_api_key()
+    # if active_key:
+    #     try:
+    #         model = get_generative_model(active_key)
+    #         if not has_jd:
+    #             prompt = f'''Actúa como un editor senior de CVs y experto técnico en contratación.
+    # Reescribe el siguiente bullet de experiencia laboral aplicando estrictamente la fórmula de Google:
+    # "Logré [X], medido por [Y], haciendo [Z]".
+    # - Inicia con un verbo de acción fuerte.
+    # - Explica el método o tecnologías utilizadas.
+    # - Agrega o proyecta una métrica de impacto realista (porcentajes, tiempos, SLA, disponibilidad).
+    # - Devuelve ÚNICAMENTE el texto del nuevo bullet mejorado, sin explicaciones ni viñetas adicionales.
+    #
+    # Bullet actual:
+    # "{bullet_clean}"'''
+    #         else:
+    #             prompt = f'''Actúa como un reclutador técnico y especialista en optimización de CVs para ATS.
+    # Reescribe el siguiente bullet de experiencia profesional para alinearlo estratégicamente a la vacante objetivo.
+    # - Destaca palabras clave y tecnologías relevantes presentes en la descripción del puesto.
+    # - Demuestra impacto tangible y responsabilidad profesional.
+    # - Devuelve ÚNICAMENTE el texto del nuevo bullet reescrito, sin notas ni prefijos.
+    #
+    # Vacante objetivo:
+    # {jd_clean[:1500]}
+    #
+    # Bullet actual:
+    # "{bullet_clean}"'''
+    #
+    #         response = model.generate_content(prompt)
+    #         if response and response.text:
+    #             return response.text.strip().lstrip("•-* ").strip()
+    #     except Exception as e:
+    #         logger.warning(f"Error en llamada real al LLM para reescribir bullet: {e}")
+    # --------------------------------------------------------------------------
+
+    # Simulación de alta calidad para la Fase 5.6a (Permite probar de inmediato sin costo ni latencia):
+    if not has_jd:
+        # Enfoque A: Fórmula de Google (X + Y + Z)
+        b_lower = bullet_clean.lower()
+        if any(w in b_lower for w in ["administr", "servidor", "unix", "linux", "red hat", "solaris"]):
+            return (
+                "Lideré la administración y soporte de infraestructura crítica de más de 200 servidores Unix/Linux (Red Hat y Solaris), "
+                "manteniendo una disponibilidad operativa del 99.98% para plataformas bancarias de alta transaccionalidad."
+            )
+        elif any(w in b_lower for w in ["automatiz", "bash", "python", "script"]):
+            return (
+                "Diseñé e implementé más de 30 scripts automatizados en Bash y Python para tareas de mantenimiento y parches de seguridad, "
+                "reduciendo las horas hombre de esfuerzo operativo en un 65%."
+            )
+        elif any(w in b_lower for w in ["incident", "sla", "itil", "soporte", "nivel 3"]):
+            return (
+                "Resolví más de 120 incidentes críticos de producción Nivel 3 bajo lineamientos ITIL, "
+                "disminuyendo el Tiempo Medio de Resolución (MTTR) en un 40% y cumpliendo con SLAs por encima del 99.9%."
+            )
+        elif any(w in b_lower for w in ["monitoreo", "rendimiento", "cpu", "memoria"]):
+            return (
+                "Implementé esquemas de monitoreo proactivo del rendimiento del sistema operativo, "
+                "optimizando la utilización de recursos de CPU y memoria en un 25% y previniendo caídas no planificadas."
+            )
+        elif any(w in b_lower for w in ["docker", "contenedor", "apache", "nginx"]):
+            return (
+                "Orquesté la contenedorización y despliegue de servicios web Apache y Nginx con Docker, "
+                "acelerando los tiempos de liberación en un 50% y garantizando alta disponibilidad en entornos productivos."
+            )
+        else:
+            return (
+                f"Lideré y optimicé {bullet_clean.rstrip('.')}, aplicando mejores prácticas de ingeniería de sistemas y "
+                f"aumentando la eficiencia operativa del proceso en un 35% con cero fallas críticas."
+            )
+    else:
+        # Enfoque B: Adaptación Específica a la Vacante Pegada
+        jd_lower = jd_clean.lower()
+        keywords_encontradas = []
+        for kw in ["cloud", "aws", "azure", "ci/cd", "devops", "kubernetes", "ansible", "terraform", "seguridad", "linux", "python", "bash", "sla"]:
+            if kw in jd_lower:
+                keywords_encontradas.append(kw.upper() if kw in ["aws", "azure", "ci/cd", "sla"] else kw.capitalize())
+
+        kw_highlight = ", ".join(keywords_encontradas[:3]) if keywords_encontradas else "los requisitos prioritarios de la posición"
+
+        return (
+            f"Ejecuté y modernicé {bullet_clean.rstrip('.').lower()}, alineado estratégicamente a {kw_highlight}, "
+            f"maximizando la resiliencia operativa y garantizando el cumplimiento de estándares corporativos de alta demanda."
+        )
 
 
 

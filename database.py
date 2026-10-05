@@ -121,9 +121,16 @@ def create_tables():
             phone TEXT,
             location TEXT,
             summary TEXT,
+            preferred_language TEXT DEFAULT NULL,
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         """)
+
+        # Migración Fase 6.1: asegurar que user_profile tenga la columna preferred_language
+        cursor.execute("PRAGMA table_info(user_profile);")
+        profile_cols = [col[1] for col in cursor.fetchall()]
+        if profile_cols and "preferred_language" not in profile_cols:
+            cursor.execute("ALTER TABLE user_profile ADD COLUMN preferred_language TEXT DEFAULT NULL;")
 
         # ----------------------------------------------------------------------
         # TABLA 5: user_skills (Mi inventario maestro de habilidades)
@@ -145,12 +152,78 @@ def create_tables():
         );
         """)
 
+        # ----------------------------------------------------------------------
+        # TABLA 6: resume_bullets (Fase 5.6a: CV Builder & AI Optimizer)
+        # Almacena los puntos clave (bullets) del CV por sección/empresa.
+        # original_text: Texto base original del CV.
+        # current_text: Texto actualmente editado o mejorado con IA.
+        # order_index: Posición para mantener el orden secuencial.
+        # ----------------------------------------------------------------------
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS resume_bullets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            section TEXT NOT NULL,
+            original_text TEXT NOT NULL,
+            current_text TEXT NOT NULL,
+            order_index INTEGER DEFAULT 0
+        );
+        """)
+
         conn.commit()
 
+    # Sembrar datos de ejemplo si la tabla está vacía
+    seed_default_resume_bullets()
+
 
 # ------------------------------------------------------------------------------
-# CONSTANTES DE DOMINIO (Fase 5.1: My Profile)
+# CONSTANTES DE DOMINIO
 # ------------------------------------------------------------------------------
+# Monedas de América y Europa (Fase 6.1)
+CURRENCY_OPTIONS = [
+    # Principales / América del Norte y Centroamérica
+    "USD ($) — Dólar estadounidense (EE. UU.)",
+    "CRC (₡) — Colón costarricense (Costa Rica)",
+    "EUR (€) — Euro (Unión Europea)",
+    "GBP (£) — Libra esterlina (Reino Unido)",
+    "CAD (CA$) — Dólar canadiense (Canadá)",
+    "MXN ($) — Peso mexicano (México)",
+    "GTQ (Q) — Quetzal (Guatemala)",
+    "HNL (L) — Lempira (Honduras)",
+    "NIO (C$) — Córdoba (Nicaragua)",
+    "PAB (B/.) — Balboa (Panamá)",
+    "DOP (RD$) — Peso dominicano (Rep. Dominicana)",
+    "JMD (J$) — Dólar jamaiquino (Jamaica)",
+    "TTD (TT$) — Dólar trinitense (Trinidad y Tobago)",
+    "BSD (B$) — Dólar bahameño (Bahamas)",
+    "BZD (BZ$) — Dólar beliceño (Belice)",
+    # América del Sur
+    "BRL (R$) — Real brasileño (Brasil)",
+    "COP ($) — Peso colombiano (Colombia)",
+    "ARS ($) — Peso argentino (Argentina)",
+    "CLP ($) — Peso chileno (Chile)",
+    "PEN (S/) — Sol peruano (Perú)",
+    "UYU ($) — Peso uruguayo (Uruguay)",
+    "BOB (Bs.) — Boliviano (Bolivia)",
+    "PYG (₲) — Guaraní (Paraguay)",
+    "VES (Bs.) — Bolívar digital (Venezuela)",
+    "GYD (G$) — Dólar guyanés (Guyana)",
+    "SRD (Sr$) — Dólar surinamés (Surinam)",
+    # Europa
+    "CHF (Fr.) — Franco suizo (Suiza)",
+    "SEK (kr) — Corona sueca (Suecia)",
+    "NOK (kr) — Corona noruega (Noruega)",
+    "DKK (kr) — Corona danesa (Dinamarca)",
+    "PLN (zł) — Złoty polaco (Polonia)",
+    "CZK (Kč) — Corona checa (Rep. Checa)",
+    "HUF (Ft) — Forinto húngaro (Hungría)",
+    "RON (lei) — Leu rumano (Rumania)",
+    "BGN (лв) — Lev búlgaro (Bulgaria)",
+    "ISK (kr) — Corona islandesa (Islandia)",
+    "TRY (₺) — Lira turca (Turquía)",
+    # Sin especificar
+    "TBD / Sin especificar"
+]
+
 SKILL_CATEGORIES = [
     "Operating Systems",
     "Cloud",
@@ -509,10 +582,12 @@ def get_salary_statistics() -> Dict[str, Any]:
         rows = cursor.fetchall()
 
     salarios_validos = []
+    non_usd_codes = ["CRC", "EUR", "GBP", "CAD", "MXN", "GTQ", "HNL", "NIO", "PAB", "DOP", "BRL", "COP", "ARS", "CLP", "PEN", "UYU", "BOB", "PYG", "VES", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN", "ISK", "TRY"]
     for row in rows:
         val = str(row[0])
-        # Ignoramos monedas no USD para no mezclar unidades (ej. CRC)
-        if "CRC" in val:
+        val_upper = val.upper()
+        # Ignoramos monedas explícitamente no USD para no mezclar unidades (ej. CRC, EUR, etc.)
+        if any(c in val_upper for c in non_usd_codes):
             continue
         # Buscamos números mayores o iguales a 500 para evitar números de versión o ruido
         nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", val.replace(",", "")) if float(n) >= 500]
@@ -618,6 +693,40 @@ def get_user_profile() -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+def get_user_preferred_language() -> Optional[str]:
+    """
+    Fase 6.1 (i18n): Obtiene la preferencia de idioma guardada del usuario ('es', 'en' o None).
+    """
+    query = "SELECT preferred_language FROM user_profile WHERE id = 1;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        row = cursor.fetchone()
+        if row and row["preferred_language"]:
+            return str(row["preferred_language"]).strip().lower()
+        return None
+
+
+def set_user_preferred_language(lang: str) -> bool:
+    """
+    Fase 6.1 (i18n): Guarda o actualiza la preferencia de idioma del usuario ('es' o 'en') en user_profile.
+    Si la fila id=1 no existe aún, la crea con este valor inicial.
+    """
+    lang_clean = lang.strip().lower() if lang else "es"
+    query = """
+    INSERT INTO user_profile (id, preferred_language, updated_at)
+    VALUES (1, ?, datetime('now', 'localtime'))
+    ON CONFLICT(id) DO UPDATE SET
+        preferred_language = excluded.preferred_language,
+        updated_at = datetime('now', 'localtime');
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (lang_clean,))
+        conn.commit()
+        return True
+
+
 def add_user_skill(
     skill_name: str,
     category: str,
@@ -713,6 +822,117 @@ def delete_user_skill(skill_id: int) -> bool:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, (skill_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ==============================================================================
+# FASE 5.6a: FUNCIONES PARA RESUME BULLETS (CV BUILDER)
+# ==============================================================================
+
+def seed_default_resume_bullets():
+    """
+    Inserta bullets iniciales de ejemplo si la tabla resume_bullets está vacía.
+    Permite probar el CV Builder de inmediato con datos realistas basados en el perfil del usuario.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM resume_bullets;")
+            count = cursor.fetchone()[0]
+            if count == 0:
+                default_bullets = [
+                    (
+                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
+                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
+                        1
+                    ),
+                    (
+                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
+                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
+                        2
+                    ),
+                    (
+                        "Unix L3 Senior Systems Administrator - NTT Data/Citibank",
+                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
+                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
+                        3
+                    ),
+                    (
+                        "Senior Linux & Infrastructure Specialist - Experiencia Previa",
+                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
+                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
+                        1
+                    ),
+                    (
+                        "Senior Linux & Infrastructure Specialist - Experiencia Previa",
+                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
+                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
+                        2
+                    )
+                ]
+                cursor.executemany(
+                    """
+                    INSERT INTO resume_bullets (section, original_text, current_text, order_index)
+                    VALUES (?, ?, ?, ?);
+                    """,
+                    default_bullets
+                )
+                conn.commit()
+    except Exception as e:
+        print(f"Aviso al sembrar resume_bullets: {e}")
+
+
+def get_all_resume_bullets() -> List[Dict[str, Any]]:
+    """
+    Obtiene todos los bullets del CV ordenados por sección, order_index e id.
+    """
+    query = "SELECT * FROM resume_bullets ORDER BY section ASC, order_index ASC, id ASC;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def add_resume_bullet(section: str, original_text: str, current_text: Optional[str] = None, order_index: int = 0) -> int:
+    """
+    Inserta un nuevo bullet en una sección del CV y retorna su ID generado en SQLite.
+    """
+    if current_text is None:
+        current_text = original_text
+    query = """
+    INSERT INTO resume_bullets (section, original_text, current_text, order_index)
+    VALUES (?, ?, ?, ?);
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (section.strip(), original_text.strip(), current_text.strip(), order_index))
+        conn.commit()
+        return cursor.lastrowid or 0
+
+
+def update_resume_bullet(bullet_id: int, current_text: str) -> bool:
+    """
+    Actualiza el texto actual (current_text) de un bullet específico tras ser aceptado por el usuario.
+    """
+    query = "UPDATE resume_bullets SET current_text = ? WHERE id = ?;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (current_text.strip(), bullet_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_resume_bullet(bullet_id: int) -> bool:
+    """
+    Elimina un bullet del CV por su ID.
+    """
+    query = "DELETE FROM resume_bullets WHERE id = ?;"
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (bullet_id,))
         conn.commit()
         return cursor.rowcount > 0
 
