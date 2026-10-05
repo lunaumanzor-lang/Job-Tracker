@@ -71,6 +71,9 @@ from ai_service import (
     rewrite_resume_bullet
 )
 
+# Fase 5.6c: Generador de PDF ATS-Friendly
+from pdf_generator import generate_resume_pdf
+
 # ------------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
 # ------------------------------------------------------------------------------
@@ -2537,10 +2540,79 @@ elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Opti
         with tab_preview:
             st.markdown(f"### {t('cv_preview_col_title')}")
 
-            # Placeholder explicativo según el alcance de la Fase 5.6a
+            # ------------------------------------------------------------------
+            # FASE 5.6c: PANEL DE CONFIGURACIÓN Y EXPORTACIÓN A PDF ATS-FRIENDLY
+            # ------------------------------------------------------------------
             with st.container(border=True):
-                st.markdown(f"🏷️ **{t('cv_preview_placeholder_badge')}**")
-                st.info(f"📄 **{t('cv_preview_placeholder_desc')}**")
+                st.markdown(f"#### {t('cv_pdf_export_title')}")
+
+                col_sel_tmpl, col_color = st.columns([3, 2])
+                with col_sel_tmpl:
+                    template_opciones = {
+                        "moderno": t("cv_template_moderno"),
+                        "ejecutivo": t("cv_template_ejecutivo")
+                    }
+                    tmpl_choice = st.selectbox(
+                        t("cv_template_selector_label"),
+                        options=list(template_opciones.keys()),
+                        format_func=lambda k: template_opciones[k],
+                        key="sb_cv_template_choice"
+                    )
+                with col_color:
+                    color_acento = st.color_picker(
+                        t("cv_color_picker_label"),
+                        value="#1B365D",
+                        key="cp_cv_accent_color"
+                    )
+
+                btn_generate_pdf = st.button(
+                    t("cv_btn_generate_pdf"),
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_trigger_generate_pdf"
+                )
+
+                if btn_generate_pdf:
+                    with st.spinner(t("cv_pdf_generating_spinner")):
+                        p_usuario = get_user_profile()
+                        u_skills = get_all_user_skills()
+                        r_bullets = get_all_resume_bullets()
+                        lang_act = get_current_language()
+
+                        pdf_bytes, txt_verif, err_gen = generate_resume_pdf(
+                            template_name=tmpl_choice,
+                            accent_color=color_acento,
+                            user_profile=p_usuario,
+                            user_skills=u_skills,
+                            resume_bullets=r_bullets,
+                            language=lang_act
+                        )
+
+                        if err_gen:
+                            st.error(t("cv_pdf_err_generation", error=err_gen))
+                        elif not txt_verif or len(txt_verif.strip()) < 50:
+                            st.warning(t("cv_pdf_err_unreadable"))
+                        else:
+                            st.session_state["generated_cv_pdf"] = pdf_bytes
+                            st.session_state["generated_cv_chars"] = len(txt_verif)
+                            st.session_state["generated_cv_tmpl"] = tmpl_choice
+                            st.rerun()
+
+                if "generated_cv_pdf" in st.session_state:
+                    st.success(t("cv_pdf_verified_success", chars=st.session_state.get("generated_cv_chars", 0)))
+                    p_info = get_user_profile() or {}
+                    nombre_descarga = p_info.get("full_name") or "Curriculum"
+                    nombre_limpio = re.sub(r'[^a-zA-Z0-9_-]', '_', nombre_descarga).strip('_')
+                    file_pdf_name = f"CV_{nombre_limpio}_{st.session_state.get('generated_cv_tmpl', 'ats')}.pdf"
+
+                    st.download_button(
+                        label=t("cv_btn_download_pdf"),
+                        data=st.session_state["generated_cv_pdf"],
+                        file_name=file_pdf_name,
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="btn_download_resume_pdf"
+                    )
 
             st.markdown(f"##### {t('cv_preview_live_summary')}")
             with st.container(border=True):

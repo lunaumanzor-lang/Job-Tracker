@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>{{ profile.full_name or 'Curriculum Vitae' }}</title>
+<style>
+    @page {
+        size: letter;
+        margin: 1.6cm 1.6cm 1.6cm 1.6cm;
+    }
+    body {
+        font-family: Helvetica, Arial, sans-serif;
+        color: #2b2b2b;
+        font-size: 9.5pt;
+        line-height: 1.35;
+        margin: 0;
+        padding: 0;
+    }
+    .header-banner {
+        background-color: {{ accent_color }};
+        color: #ffffff;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+    }
+    .candidate-name {
+        font-size: 20pt;
+        font-weight: bold;
+        margin: 0 0 4px 0;
+        color: #ffffff;
+    }
+    .candidate-title {
+        font-size: 11pt;
+        margin: 0;
+        color: #f0f0f0;
+    }
+    .contact-info {
+        font-size: 9pt;
+        color: #555555;
+        margin-bottom: 14px;
+        padding-left: 2px;
+    }
+    .section-title {
+        font-size: 11.5pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        color: {{ accent_color }};
+        border-bottom: 1.5px solid #d0d0d0;
+        padding-bottom: 2px;
+        margin-top: 14px;
+        margin-bottom: 6px;
+        page-break-after: avoid;
+    }
+    .section-content {
+        margin-bottom: 8px;
+    }
+    .job-title {
+        font-size: 10pt;
+        font-weight: bold;
+        color: #111111;
+        margin-top: 8px;
+        margin-bottom: 2px;
+        page-break-after: avoid;
+    }
+    ul.bullet-list {
+        margin-top: 3px;
+        margin-bottom: 6px;
+        padding-left: 18px;
+    }
+    li.bullet-item {
+        margin-bottom: 4px;
+        color: #333333;
+        font-size: 9.2pt;
+    }
+    .skills-category {
+        margin-bottom: 4px;
+        font-size: 9.2pt;
+    }
+    .skills-category-name {
+        font-weight: bold;
+        color: #222222;
+    }
+</style>
+</head>
+<body>
+
+    <!-- Encabezado con franja de color moderna -->
+    <div class="header-banner">
+        <div class="candidate-name">{{ profile.full_name or 'Nombre del Candidato' }}</div>
+        {% if profile.current_title %}
+        <div class="candidate-title">{{ profile.current_title }}</div>
+        {% endif %}
+    </div>
+
+    <!-- Contacto como texto estándar en el cuerpo (legible por ATS) -->
+    <div class="contact-info">
+        {% set contacts = [] %}
+        {% if profile.email %}{% set _ = contacts.append(profile.email) %}{% endif %}
+        {% if profile.phone %}{% set _ = contacts.append(profile.phone) %}{% endif %}
+        {% if profile.location %}{% set _ = contacts.append(profile.location) %}{% endif %}
+        {{ contacts | join('   |   ') }}
+    </div>
+
+    <!-- Resumen Profesional -->
+    {% if profile.summary %}
+    <div class="section-title">{{ labels.summary }}</div>
+    <div class="section-content">
+        <p style="margin: 0 0 6px 0; text-align: justify;">{{ profile.summary }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Tecnologías y Habilidades Clave -->
+    {% if skills_by_category %}
+    <div class="section-title">{{ labels.technologies }}</div>
+    <div class="section-content">
+        {% for cat_name, skill_items in skills_by_category.items() %}
+        <div class="skills-category">
+            <span class="skills-category-name">{{ cat_name }}:</span>
+            {{ skill_items | join(', ') }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Experiencia Profesional (Bullets editados y aceptados en CV Builder) -->
+    {% if bullets_by_section %}
+    <div class="section-title">{{ labels.experience }}</div>
+    <div class="section-content">
+        {% for section_name, b_list in bullets_by_section.items() %}
+        <div class="job-title">{{ section_name }}</div>
+        <ul class="bullet-list">
+            {% for b in b_list %}
+            <li class="bullet-item">{{ b.current_text }}</li>
+            {% endfor %}
+        </ul>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</body>
+</html>

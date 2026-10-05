@@ -449,6 +449,19 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "cv_match_success_toast": "¡Match Score calculado con éxito!",
         "cv_tab_match_analysis": "🎯 Match con Vacante",
         "cv_tab_pdf_preview": "📄 Vista Previa del CV",
+
+        # --- 5.6c CV Builder - PDF Export ---
+        "cv_pdf_export_title": "📥 Exportar a PDF (ATS-Friendly)",
+        "cv_template_selector_label": "Plantilla de CV",
+        "cv_template_moderno": "🎨 Moderno (Franja superior de acento)",
+        "cv_template_ejecutivo": "👔 Ejecutivo (Líneas divisorias clásicas)",
+        "cv_color_picker_label": "Color de Acento",
+        "cv_btn_generate_pdf": "📄 Generar PDF ATS",
+        "cv_btn_download_pdf": "⬇️ Descargar CV en PDF",
+        "cv_pdf_verified_success": "✅ ¡PDF verificado exitosamente! Se extrajeron {chars} caracteres de texto seleccionable y legible por sistemas ATS.",
+        "cv_pdf_err_generation": "❌ Error al generar el PDF: {error}",
+        "cv_pdf_err_unreadable": "⚠️ Advertencia ATS: El PDF generado no contiene texto seleccionable suficiente. Revisa los datos de tu CV.",
+        "cv_pdf_generating_spinner": "⚙️ Compilando template HTML y generando PDF ATS-friendly...",
     },
 
     "en": {
@@ -892,6 +905,19 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "cv_match_success_toast": "Match score calculated successfully!",
         "cv_tab_match_analysis": "🎯 Job Match Analysis",
         "cv_tab_pdf_preview": "📄 Resume Preview",
+
+        # --- 5.6c CV Builder - PDF Export ---
+        "cv_pdf_export_title": "📥 Export to PDF (ATS-Friendly)",
+        "cv_template_selector_label": "Resume Template",
+        "cv_template_moderno": "🎨 Modern (Top accent banner)",
+        "cv_template_ejecutivo": "👔 Executive (Classic divider lines)",
+        "cv_color_picker_label": "Accent Color",
+        "cv_btn_generate_pdf": "📄 Generate ATS PDF",
+        "cv_btn_download_pdf": "⬇️ Download Resume PDF",
+        "cv_pdf_verified_success": "✅ PDF successfully verified! Extracted {chars} characters of selectable text compatible with ATS parsers.",
+        "cv_pdf_err_generation": "❌ Error generating PDF: {error}",
+        "cv_pdf_err_unreadable": "⚠️ ATS Warning: The generated PDF does not contain sufficient selectable text. Please review your resume data.",
+        "cv_pdf_generating_spinner": "⚙️ Compiling HTML template and building ATS-friendly PDF...",
     }
 }
 
