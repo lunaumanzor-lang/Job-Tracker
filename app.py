@@ -1864,13 +1864,53 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
     try:
         # Supabase devuelve los datos directamente como una lista de diccionarios
         response = supabase.table("applications").select("*").order("id", desc=True).execute()
-        todas_las_apps = response.data
+        todas_las_apps = response.data or []
+        
+        # Sincronización automática hacia SQLite local para asegurar consistencia
+        if todas_las_apps:
+            try:
+                from database import get_connection
+                with get_connection() as conn:
+                    c_sync = conn.cursor()
+                    for item in todas_las_apps:
+                        c_sync.execute("""
+                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                company=excluded.company,
+                                position=excluded.position,
+                                status=excluded.status,
+                                application_date=excluded.application_date,
+                                salary=excluded.salary,
+                                work_mode=excluded.work_mode,
+                                location=excluded.location,
+                                job_url=excluded.job_url,
+                                notes=excluded.notes,
+                                follow_up_date=excluded.follow_up_date
+                        """, (
+                            item.get("id"),
+                            item.get("company"),
+                            item.get("position"),
+                            item.get("status") or "Applied",
+                            item.get("application_date"),
+                            item.get("salary"),
+                            item.get("work_mode"),
+                            item.get("location"),
+                            item.get("job_url"),
+                            item.get("notes"),
+                            item.get("follow_up_date")
+                        ))
+                    conn.commit()
+            except Exception:
+                pass
     except Exception as e:
         if "JWT expired" in str(e):
             st.warning(t("session_expired_warning"))
-            todas_las_apps = []
         else:
-            st.error(f"Error al leer la base de datos en la nube: {e}")
+            st.warning(f"Aviso al sincronizar con la nube: {e}")
+        try:
+            todas_las_apps = get_all_applications()
+        except Exception:
             todas_las_apps = []
 
     if not todas_las_apps:
@@ -1956,9 +1996,50 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                 )
 
             app_id_seleccionado = opciones_apps[seleccion_texto]
-            app_actual = get_application_by_id(app_id_seleccionado)
+
+            # 1. Obtener directamente de la lista ya cargada de Supabase/memoria
+            app_actual = next((a for a in todas_las_apps if a.get("id") == app_id_seleccionado), None)
+
+            # 2. Si no estuviera en memoria, consultar SQLite local
+            if not app_actual:
+                app_actual = get_application_by_id(app_id_seleccionado)
 
             if app_actual:
+                # Asegurar que esté sincronizado en SQLite local para las demás funcionalidades
+                try:
+                    from database import get_connection
+                    with get_connection() as conn:
+                        c_chk = conn.cursor()
+                        c_chk.execute("""
+                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                company=excluded.company,
+                                position=excluded.position,
+                                status=excluded.status,
+                                application_date=excluded.application_date,
+                                salary=excluded.salary,
+                                work_mode=excluded.work_mode,
+                                location=excluded.location,
+                                job_url=excluded.job_url,
+                                notes=excluded.notes,
+                                follow_up_date=excluded.follow_up_date
+                        """, (
+                            app_actual.get("id"),
+                            app_actual.get("company"),
+                            app_actual.get("position"),
+                            app_actual.get("status") or "Applied",
+                            app_actual.get("application_date"),
+                            app_actual.get("salary"),
+                            app_actual.get("work_mode"),
+                            app_actual.get("location"),
+                            app_actual.get("job_url"),
+                            app_actual.get("notes"),
+                            app_actual.get("follow_up_date")
+                        ))
+                        conn.commit()
+                except Exception:
+                    pass
                 # Mostramos los detalles y el formulario de edición
                 col_detalle, col_edicion = st.columns([1, 1], gap="large")
 
@@ -2158,19 +2239,37 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
 
                                 # 2. Sincronizamos también en SQLite local por consistencia
                                 try:
-                                    update_application(
-                                        app_id=app_actual["id"],
-                                        company=edit_company.strip(),
-                                        position=edit_position.strip(),
-                                        status=edit_status,
-                                        application_date=fecha_str,
-                                        salary=salary_edit_final,
-                                        work_mode=edit_mode,
-                                        location=edit_location.strip() if edit_location else None,
-                                        job_url=edit_job_url.strip() if edit_job_url else None,
-                                        notes=edit_notes.strip() if edit_notes else None,
-                                        follow_up_date=fup_str
-                                    )
+                                    from database import get_connection
+                                    with get_connection() as conn:
+                                        c_up = conn.cursor()
+                                        c_up.execute("""
+                                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
+                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            ON CONFLICT(id) DO UPDATE SET
+                                                company=excluded.company,
+                                                position=excluded.position,
+                                                status=excluded.status,
+                                                application_date=excluded.application_date,
+                                                salary=excluded.salary,
+                                                work_mode=excluded.work_mode,
+                                                location=excluded.location,
+                                                job_url=excluded.job_url,
+                                                notes=excluded.notes,
+                                                follow_up_date=excluded.follow_up_date
+                                        """, (
+                                            app_actual["id"],
+                                            edit_company.strip(),
+                                            edit_position.strip(),
+                                            edit_status,
+                                            fecha_str,
+                                            salary_edit_final,
+                                            edit_mode,
+                                            edit_location.strip() if edit_location else None,
+                                            edit_job_url.strip() if edit_job_url else None,
+                                            edit_notes.strip() if edit_notes else None,
+                                            fup_str
+                                        ))
+                                        conn.commit()
                                 except Exception:
                                     pass
 
@@ -2182,11 +2281,10 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                 # --------------------------------------------------------------
                 # FASE 5.3: INTERVIEW COACH INTEGRADO
                 # --------------------------------------------------------------
-                # --------------------------------------------------------------
-                # FASE 5.3: INTERVIEW COACH INTEGRADO
-                # --------------------------------------------------------------
                 if st.session_state.get("show_interview_coach") and st.session_state.get("coach_app_id") == app_actual["id"]:
                     render_interview_coach(app_actual=app_actual, show_close_button=True)
+            else:
+                st.error("No se pudo cargar la información de la aplicación seleccionada." if st.session_state.get("lang") == "es" else "Could not load details for the selected application.")
 
 
 # ==============================================================================
