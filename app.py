@@ -78,7 +78,8 @@ from ai_service import (
     evaluate_interview_answer,
     get_api_key,
     generar_sugerencia_curso,
-    rewrite_resume_bullet
+    rewrite_resume_bullet,
+    parse_job_details_with_ai
 )
 
 # Fase 5.6c: Generador de PDF ATS-Friendly
@@ -2294,48 +2295,181 @@ elif menu_opcion in ("add_app", "➕ Agregar Nueva Aplicación"):
     st.subheader(t("add_app_title"))
     st.caption(t("add_app_caption"))
 
-    with st.form("form_nueva_aplicacion", clear_on_submit=True):
+    form_ver = st.session_state.get("add_app_ver", 0)
+
+    # --------------------------------------------------------------------------
+    # AUTO-COMPLETAR INTELIGENTE CON IA DESDE URL O TEXTO (LinkedIn, Indeed, Glassdoor, etc.)
+    # --------------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown(f"### {t('add_app_autofill_title')}")
+        st.caption(t('add_app_autofill_desc'))
+
+        c_url1, c_url2 = st.columns([3.5, 1.5])
+        with c_url1:
+            url_autofill_input = st.text_input(
+                "Job URL",
+                value=st.session_state.get("new_app_url", ""),
+                placeholder=t("add_app_autofill_url_placeholder"),
+                key="input_autofill_url_raw",
+                label_visibility="collapsed"
+            )
+        with c_url2:
+            btn_do_autofill = st.button(t("add_app_autofill_btn"), key="btn_exec_autofill", type="primary", use_container_width=True)
+
+        if btn_do_autofill:
+            url_target = url_autofill_input.strip()
+            if not url_target or not url_target.startswith(("http://", "https://")):
+                st.warning(f"⚠️ {t('add_app_autofill_err_empty_url')}")
+            else:
+                with st.spinner(f"🌐 {t('add_app_autofill_spinner_scrap')}"):
+                    ok_scrap, res_scrap = extract_job_text_from_url(url_target)
+
+                if ok_scrap and len(res_scrap.strip()) >= 50:
+                    with st.spinner(f"🤖 {t('add_app_autofill_spinner_ai')}"):
+                        datos_extraidos = parse_job_details_with_ai(res_scrap.strip())
+
+                    if datos_extraidos:
+                        st.session_state["new_app_company"] = datos_extraidos.get("company", "")
+                        st.session_state["new_app_position"] = datos_extraidos.get("position", "")
+                        st.session_state["new_app_location"] = datos_extraidos.get("location", "")
+                        st.session_state["new_app_work_mode"] = datos_extraidos.get("work_mode", "Remote")
+                        st.session_state["new_app_salary"] = datos_extraidos.get("salary") or ""
+                        st.session_state["new_app_salary_curr"] = datos_extraidos.get("currency", "USD")
+                        st.session_state["new_app_url"] = url_target
+                        st.session_state["new_app_notes"] = datos_extraidos.get("notes", "")
+                        st.session_state["add_app_ver"] = form_ver + 1
+                        st.toast(t("add_app_autofill_success_toast"), icon="✨")
+                        st.rerun()
+                    else:
+                        st.error("No se pudieron estructurar los datos con IA.")
+                else:
+                    st.warning(f"{res_scrap}")
+                    # Guardamos al menos la URL para el formulario
+                    st.session_state["new_app_url"] = url_target
+                    st.session_state["add_app_ver"] = form_ver + 1
+
+        # Expander de respaldo si el portal requiere pegar texto manualmente (login-wall)
+        with st.expander(t("add_app_autofill_fallback_expander"), expanded=False):
+            fallback_text = st.text_area(
+                "Texto de la vacante",
+                height=120,
+                key="txt_fallback_autofill",
+                placeholder="Pega aquí el texto completo o la descripción de la vacante..."
+            )
+            if st.button(t("add_app_autofill_fallback_btn"), key="btn_exec_fallback_ai"):
+                if fallback_text.strip():
+                    with st.spinner(f"🤖 {t('add_app_autofill_spinner_ai')}"):
+                        datos_fb = parse_job_details_with_ai(fallback_text.strip())
+                    if datos_fb:
+                        st.session_state["new_app_company"] = datos_fb.get("company", "")
+                        st.session_state["new_app_position"] = datos_fb.get("position", "")
+                        st.session_state["new_app_location"] = datos_fb.get("location", "")
+                        st.session_state["new_app_work_mode"] = datos_fb.get("work_mode", "Remote")
+                        st.session_state["new_app_salary"] = datos_fb.get("salary") or ""
+                        st.session_state["new_app_salary_curr"] = datos_fb.get("currency", "USD")
+                        st.session_state["new_app_notes"] = datos_fb.get("notes", "")
+                        if url_autofill_input.strip():
+                            st.session_state["new_app_url"] = url_autofill_input.strip()
+                        st.session_state["add_app_ver"] = form_ver + 1
+                        st.toast(t("add_app_autofill_success_toast"), icon="✨")
+                        st.rerun()
+                else:
+                    st.warning("Por favor pega el texto de la vacante.")
+
+    # Si hay datos precargados, mostrar aviso amigable y botón de limpiar
+    if any(st.session_state.get(k) for k in ["new_app_company", "new_app_position", "new_app_notes"]):
+        c_info, c_clear = st.columns([4, 1])
+        with c_info:
+            emp_nom = st.session_state.get("new_app_company") or "Empresa"
+            pos_nom = st.session_state.get("new_app_position") or "Puesto"
+            st.info(f"✨ Formulario precargado con IA para **{emp_nom}** — **{pos_nom}**. Revisa los datos y guarda la postulación." if st.session_state.get("lang") == "es" else f"✨ Form preloaded with AI for **{emp_nom}** — **{pos_nom}**. Review details and save application.")
+        with c_clear:
+            if st.button(t("add_app_autofill_clear_btn"), key="btn_clear_autofill_data"):
+                for k in ["new_app_company", "new_app_position", "new_app_location", "new_app_work_mode", "new_app_salary", "new_app_salary_curr", "new_app_url", "new_app_notes"]:
+                    st.session_state.pop(k, None)
+                st.session_state["add_app_ver"] = form_ver + 1
+                st.rerun()
+
+    # --------------------------------------------------------------------------
+    # FORMULARIO DE REGISTRO
+    # --------------------------------------------------------------------------
+    with st.form("form_nueva_aplicacion", clear_on_submit=False):
         col1, col2 = st.columns(2)
         with col1:
-            company = st.text_input(t("field_company"), placeholder="Ej. Microsoft, Akamai...")
+            company = st.text_input(
+                t("field_company"),
+                value=st.session_state.get("new_app_company", ""),
+                placeholder="Ej. Microsoft, Akamai...",
+                key=f"new_company_{form_ver}"
+            )
         with col2:
-            position = st.text_input(t("field_position"), placeholder="Ej. DevOps Engineer, SRE...")
+            position = st.text_input(
+                t("field_position"),
+                value=st.session_state.get("new_app_position", ""),
+                placeholder="Ej. DevOps Engineer, SRE...",
+                key=f"new_position_{form_ver}"
+            )
 
         col3, col4 = st.columns(2)
         with col3:
-            app_date = st.date_input(t("field_application_date"), value=date.today(), key="new_app_date")
+            app_date = st.date_input(t("field_application_date"), value=date.today(), key=f"new_app_date_{form_ver}")
         with col4:
-            status = st.selectbox(t("field_status"), options=STATUS_OPTIONS, index=0, key="new_status")
+            status = st.selectbox(t("field_status"), options=STATUS_OPTIONS, index=0, key=f"new_status_{form_ver}")
 
         col5, col6 = st.columns(2)
         with col5:
-            work_mode = st.radio(t("field_work_mode"), options=["Remote", "Hybrid", "On-site"], horizontal=True, key="new_work_mode")
+            mode_val = st.session_state.get("new_app_work_mode", "Remote")
+            idx_mode = ["Remote", "Hybrid", "On-site"].index(mode_val) if mode_val in ["Remote", "Hybrid", "On-site"] else 0
+            work_mode = st.radio(t("field_work_mode"), options=["Remote", "Hybrid", "On-site"], index=idx_mode, horizontal=True, key=f"new_work_mode_{form_ver}")
         with col6:
-            location = st.text_input(t("field_location"), placeholder="Ej. San José, Costa Rica / Remote US", key="new_location")
+            location = st.text_input(
+                t("field_location"),
+                value=st.session_state.get("new_app_location", ""),
+                placeholder="Ej. San José, Costa Rica / Remote US",
+                key=f"new_location_{form_ver}"
+            )
 
         col_sal1, col_sal2 = st.columns(2)
         with col_sal1:
             salary_input = st.text_input(
                 t("field_salary_amount"),
+                value=st.session_state.get("new_app_salary", ""),
                 placeholder="Ej. 5000 o 4000 - 5000",
-                key="new_salary"
+                key=f"new_salary_{form_ver}"
             )
         with col_sal2:
+            curr_val = st.session_state.get("new_app_salary_curr", "USD")
+            idx_curr = 0
+            for ic, c_opt in enumerate(CURRENCY_OPTIONS):
+                if curr_val in c_opt:
+                    idx_curr = ic
+                    break
             selected_curr = st.selectbox(
                 t("field_currency"),
                 options=CURRENCY_OPTIONS,
-                index=0,  # USD por defecto
-                key="new_salary_curr"
+                index=idx_curr,
+                key=f"new_salary_curr_{form_ver}"
             )
 
         col7, col8 = st.columns(2)
         with col7:
-            job_url = st.text_input(t("field_job_url"), placeholder="https://linkedin.com/jobs/...", key="new_url")
+            job_url = st.text_input(
+                t("field_job_url"),
+                value=st.session_state.get("new_app_url", ""),
+                placeholder="https://linkedin.com/jobs/...",
+                key=f"new_url_{form_ver}"
+            )
         with col8:
-            asignar_fup_nuevo = st.checkbox("Programar Follow-up", value=False, key="new_fup_chk")
-            fup_date_nuevo = st.date_input(t("field_follow_up_date"), value=date.today(), key="new_fup_date") if asignar_fup_nuevo else None
+            asignar_fup_nuevo = st.checkbox("Programar Follow-up", value=False, key=f"new_fup_chk_{form_ver}")
+            fup_date_nuevo = st.date_input(t("field_follow_up_date"), value=date.today(), key=f"new_fup_date_{form_ver}") if asignar_fup_nuevo else None
 
-        notes = st.text_area(t("field_notes"), placeholder="Pega aquí requisitos clave o notas...", key="new_notes")
+        notes = st.text_area(
+            t("field_notes"),
+            value=st.session_state.get("new_app_notes", ""),
+            placeholder="Pega aquí requisitos clave o notas...",
+            key=f"new_notes_{form_ver}",
+            height=130
+        )
 
         btn_crear = st.form_submit_button(t("btn_save_application"), use_container_width=True)
 
@@ -2438,7 +2572,11 @@ elif menu_opcion in ("add_app", "➕ Agregar Nueva Aplicación"):
                         conn.commit()
                 except Exception:
                     pass
-                
+
+                for k in ["new_app_company", "new_app_position", "new_app_location", "new_app_work_mode", "new_app_salary", "new_app_salary_curr", "new_app_url", "new_app_notes"]:
+                    st.session_state.pop(k, None)
+                st.session_state["add_app_ver"] = form_ver + 1
+
                 st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
             except Exception as e:
                 if "row-level security" in str(e).lower() and ("access_token" not in st.session_state or not st.session_state.access_token):

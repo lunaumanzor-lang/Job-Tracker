@@ -64,10 +64,35 @@ def extract_job_text_from_url(url: str, timeout: int = 8) -> Tuple[bool, str]:
     if not url_limpia.startswith(("http://", "https://")):
         return False, "La URL ingresada no es válida. Debe iniciar con http:// o https://"
 
+    import re
+
+    # Manejo especializado para LinkedIn (Guest API pública sin login-wall)
+    if "linkedin.com" in url_limpia.lower():
+        m_id = re.search(r'(?:/view/|currentJobId=|/jobs/|jobId=)(\d+)', url_limpia)
+        if m_id:
+            job_id = m_id.group(1)
+            guest_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+            try:
+                resp_li = requests.get(guest_url, headers=STANDARD_HEADERS, timeout=timeout)
+                if resp_li.status_code == 200 and len(resp_li.text) > 500:
+                    soup_li = BeautifulSoup(resp_li.content, "html.parser")
+                    for tag in soup_li(["script", "style", "nav", "footer", "header", "noscript", "svg"]):
+                        tag.decompose()
+                    lineas_li = [linea.strip() for linea in soup_li.get_text(separator="\n").splitlines()]
+                    texto_li = "\n".join(linea for linea in lineas_li if linea)
+                    if len(texto_li) >= 200:
+                        return True, texto_li
+            except Exception as ex_li:
+                logger.warning(f"Aviso consultando endpoint guest de LinkedIn: {ex_li}")
+
     try:
+        custom_headers = dict(STANDARD_HEADERS)
+        if "indeed.com" in url_limpia.lower():
+            custom_headers["Referer"] = "https://www.google.com/"
+
         response = requests.get(
             url_limpia,
-            headers=STANDARD_HEADERS,
+            headers=custom_headers,
             timeout=timeout,
             allow_redirects=True
         )

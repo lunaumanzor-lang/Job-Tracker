@@ -1365,5 +1365,117 @@ Bullet actual:
             return f"Ejecuté y modernicé {bullet_clean.rstrip('.')}, alineado estratégicamente a los requisitos prioritarios de la posición y maximizando la resiliencia operativa."
 
 
+def parse_job_details_with_ai(job_text: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Analiza el texto de una vacante de empleo utilizando Gemini LLM y extrae
+    de forma estructurada los campos clave para crear una postulación:
+    - company
+    - position
+    - location
+    - work_mode ('Remote', 'Hybrid', 'On-site')
+    - salary
+    - currency ('USD', 'EUR', 'CRC', etc.)
+    - notes (resumen estructurado de requisitos y responsabilidades)
+    """
+    clean_text = (job_text or "").strip()
+    if not clean_text:
+        return {}
+
+    active_key = api_key or get_api_key()
+    if not active_key:
+        return {
+            "company": "",
+            "position": "",
+            "location": "",
+            "work_mode": "Remote",
+            "salary": None,
+            "currency": "USD",
+            "notes": clean_text[:1200]
+        }
+
+    prompt = f"""Eres un asistente experto en reclutamiento y análisis de vacantes de empleo para perfiles profesionales.
+Analiza el siguiente texto de una oferta laboral y extrae la información en formato JSON estricto:
+
+Campos obligatorios a extraer (claves exactas):
+1. "company": Nombre exacto de la empresa u organización contratante. Si no se puede determinar con certeza, usa "".
+2. "position": Título o nombre exacto del puesto (ej: "Senior Site Reliability Engineer", "DevOps Engineer").
+3. "location": Ciudad, país o región del puesto (ej: "San José, Costa Rica", "Remote LATAM", "Madrid, España").
+4. "work_mode": Clasifica exactamente en una de estas 3 opciones: "Remote", "Hybrid" o "On-site". Si es trabajo remoto o virtual, usa "Remote".
+5. "salary": Salario numérico o rango si se menciona (ej: "5000", "4000 - 6000", "80k - 100k"). Si no se menciona ningún salario o compensación, devuelve null.
+6. "currency": Código de moneda si hay salario (ej: "USD", "EUR", "CRC", "GBP", "CAD"). Por defecto si no se sabe, usa "USD".
+7. "notes": Un resumen profesional y estructurado en español (o en el idioma de la vacante) con:
+   - Resumen del rol (2-3 líneas).
+   - Requisitos técnicos indispensables (viñetas).
+   - Responsabilidades principales (viñetas).
+
+RESPONDE ÚNICAMENTE CON UN OBJETO JSON VÁLIDO. No agregues introducciones, texto previo ni explicaciones.
+
+Texto de la vacante:
+\"\"\"
+{clean_text[:6000]}
+\"\"\"
+"""
+
+    genai.configure(api_key=active_key)
+    modelos = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash",
+        "gemini-flash-latest"
+    ]
+
+    for mod_name in modelos:
+        try:
+            model = genai.GenerativeModel(mod_name, generation_config={"temperature": 0.1})
+            resp = model.generate_content(prompt)
+            if resp and resp.text:
+                raw_json = resp.text.strip()
+                # Limpiar bloques markdown ```json ... ``` si los hubiese
+                raw_json = re.sub(r"^```(?:json)?\s*", "", raw_json, flags=re.MULTILINE)
+                raw_json = re.sub(r"\s*```$", "", raw_json, flags=re.MULTILINE).strip()
+                
+                # Encontrar el primer { y el último }
+                start_idx = raw_json.find("{")
+                end_idx = raw_json.rfind("}")
+                if start_idx != -1 and end_idx != -1:
+                    raw_json = raw_json[start_idx:end_idx+1]
+
+                datos = json.loads(raw_json)
+                if isinstance(datos, dict):
+                    # Normalizar work_mode
+                    wm = str(datos.get("work_mode", "")).strip().capitalize()
+                    if "remote" in wm.lower():
+                        datos["work_mode"] = "Remote"
+                    elif "hybrid" in wm.lower() or "híbr" in wm.lower():
+                        datos["work_mode"] = "Hybrid"
+                    elif "site" in wm.lower() or "presen" in wm.lower():
+                        datos["work_mode"] = "On-site"
+                    else:
+                        datos["work_mode"] = "Remote"
+
+                    # Normalizar moneda
+                    curr = str(datos.get("currency") or "USD").upper().strip()
+                    if curr not in ["USD", "EUR", "CRC", "GBP", "CAD", "MXN"]:
+                        curr = "USD"
+                    datos["currency"] = curr
+
+                    return datos
+        except Exception as ex:
+            logger.warning(f"Intento con modelo {mod_name} en parse_job_details_with_ai falló: {ex}")
+
+    # Fallback básico si todos los modelos fallan
+    return {
+        "company": "",
+        "position": "",
+        "location": "",
+        "work_mode": "Remote",
+        "salary": None,
+        "currency": "USD",
+        "notes": clean_text[:1200]
+    }
+
+
+
 
 
