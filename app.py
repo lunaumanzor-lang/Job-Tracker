@@ -487,6 +487,8 @@ with col_usr3:
         st.session_state.access_token = None
         st.session_state.refresh_token = None
         st.session_state.is_resetting_password = False
+        st.session_state.pop("main_nav_radio", None)
+        st.session_state.pop("nav_initialized", None)
         st.rerun()
 
 st.divider()
@@ -800,26 +802,31 @@ st.sidebar.title(t("nav_title"))
 st.sidebar.caption(t("nav_caption"))
 
 MENU_KEYS = [
-    "dashboard",
     "add_app",
     "view_apps",
     "analyzer",
     "coach",
     "cv_builder",
     "stats",
-    "profile"
+    "profile",
+    "dashboard"
 ]
 
 menu_label_map = {
-    "dashboard": t("nav_dashboard"),
     "add_app": t("nav_add_app"),
     "view_apps": t("nav_view_apps"),
     "analyzer": t("nav_analyzer"),
     "coach": t("nav_coach"),
     "cv_builder": t("nav_cv_builder"),
     "stats": t("nav_stats"),
-    "profile": t("nav_profile")
+    "profile": t("nav_profile"),
+    "dashboard": t("nav_dashboard")
 }
+
+# Al abrir la aplicación, garantizar que la primera vista sea 'add_app' (Add New Application)
+if "nav_initialized" not in st.session_state:
+    st.session_state["main_nav_radio"] = "add_app"
+    st.session_state["nav_initialized"] = True
 
 menu_opcion = st.sidebar.radio(
     t("nav_select_section"),
