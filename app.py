@@ -61,8 +61,15 @@ from database import (
     add_education_entry,
     update_education_entry,
     delete_education_entry,
-    save_parsed_resume_data
+    save_parsed_resume_data,
+    # Gestión de sesión persistente (4 horas)
+    save_auth_session,
+    get_auth_session,
+    update_auth_session_tokens,
+    delete_auth_session,
+    cleanup_expired_sessions
 )
+import secrets
 
 # Fase 6.1 & 6.2: Sistema centralizado de traducción
 from translations import t, t_status, t_work_mode, get_current_language
@@ -72,6 +79,7 @@ from resume_parser import extract_resume_text
 from job_scraper import extract_job_text_from_url
 from ai_service import (
     extract_skills_and_profile_from_resume,
+    detect_resume_language,
     analyze_job_description,
     generate_skill_gaps_study,
     generate_interview_questions,
@@ -147,19 +155,97 @@ url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# Inyectar el token de autenticación del usuario en el cliente PostgREST
-# para que todas las operaciones de base de datos viajen como usuario autenticado (RLS auth.uid())
-if "access_token" in st.session_state and st.session_state.access_token:
-    supabase.postgrest.auth(st.session_state.access_token)
+# Limpiar automáticamente sesiones expiradas en SQLite
+cleanup_expired_sessions()
 
-# 2. Inicializar el usuario en el estado de la sesión
+# 2. Inicializar el usuario en el estado de la sesión si no existe
 if 'user' not in st.session_state:
     st.session_state.user = None
+
+def establish_authenticated_session(user, session, email_fallback: str = "", hours: int = 4):
+    """
+    Registra al usuario autenticado en st.session_state y persiste un identificador
+    de sesión en SQLite (auth_sessions) y en la URL (st.query_params["session_id"])
+    válido durante 4 horas. Así sobrevive a los refrescos del navegador (F5).
+    """
+    st.session_state.user = user
+    if session:
+        st.session_state.access_token = session.access_token
+        st.session_state.refresh_token = session.refresh_token
+        try:
+            supabase.postgrest.auth(session.access_token)
+        except Exception:
+            pass
+
+        new_sid = secrets.token_urlsafe(32)
+        u_email = getattr(user, "email", None) or email_fallback or ""
+        u_id = getattr(user, "id", "")
+        save_auth_session(
+            session_id=new_sid,
+            user_id=str(u_id),
+            user_email=str(u_email),
+            access_token=str(session.access_token),
+            refresh_token=str(session.refresh_token),
+            hours=hours
+        )
+        st.query_params["session_id"] = new_sid
+        st.session_state.pop("session_expired_notice", None)
+
+# 2.1 AUTO-LOGIN: Si el usuario refresca la página (F5) o regresa dentro de las 4 horas
+persisted_sid = st.query_params.get("session_id")
+if persisted_sid and st.session_state.user is None:
+    sess_data = get_auth_session(persisted_sid)
+    if sess_data:
+        try:
+            auth_res = None
+            try:
+                # Intentamos restaurar con el access_token y refresh_token actuales
+                auth_res = supabase.auth.set_session(sess_data["access_token"], sess_data["refresh_token"])
+            except Exception:
+                try:
+                    # Si el access_token expiró con Supabase (1 hr), refrescamos con refresh_token
+                    auth_res = supabase.auth.refresh_session(sess_data["refresh_token"])
+                except Exception:
+                    auth_res = None
+
+            if auth_res and auth_res.user:
+                st.session_state.user = auth_res.user
+                if auth_res.session:
+                    st.session_state.access_token = auth_res.session.access_token
+                    st.session_state.refresh_token = auth_res.session.refresh_token
+                    update_auth_session_tokens(persisted_sid, auth_res.session.access_token, auth_res.session.refresh_token)
+                    try:
+                        supabase.postgrest.auth(auth_res.session.access_token)
+                    except Exception:
+                        pass
+                st.session_state.pop("session_expired_notice", None)
+            else:
+                delete_auth_session(persisted_sid)
+                st.query_params.pop("session_id", None)
+                st.session_state["session_expired_notice"] = True
+        except Exception:
+            delete_auth_session(persisted_sid)
+            st.query_params.pop("session_id", None)
+            st.session_state["session_expired_notice"] = True
+    else:
+        # La sesión superó las 4 horas o fue revocada
+        st.query_params.pop("session_id", None)
+        st.session_state["session_expired_notice"] = True
+
+# Inyectar el token de autenticación del usuario en el cliente PostgREST
+if "access_token" in st.session_state and st.session_state.access_token:
+    try:
+        supabase.postgrest.auth(st.session_state.access_token)
+    except Exception:
+        pass
 
 # 3. Crear la pantalla de Login y Registro
 def login_screen():
     st.title("💼 AI Job Application Tracker")
     st.subheader("Acceso a la plataforma")
+
+    if st.session_state.get("session_expired_notice"):
+        st.info("🕒 Tu sesión anterior expiró tras 4 horas. Por favor inicia sesión nuevamente.")
 
     tab1, tab2, tab3 = st.tabs(["Iniciar Sesión", "Crear Cuenta", "🔑 Recuperar Contraseña"])
 
@@ -172,11 +258,7 @@ def login_screen():
             if submit:
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    st.session_state.user = res.user
-                    if res.session:
-                        st.session_state.access_token = res.session.access_token
-                        st.session_state.refresh_token = res.session.refresh_token
-                        supabase.postgrest.auth(res.session.access_token)
+                    establish_authenticated_session(res.user, res.session, email_fallback=email, hours=4)
                     st.rerun()  # Refresca la pantalla para acceder a la aplicación
                 except Exception as e:
                     st.error(f"Credenciales incorrectas: {e}")
@@ -279,11 +361,7 @@ def login_screen():
                             })
                             # 2. Actualizar contraseña del usuario autenticado
                             supabase.auth.update_user({"password": new_pass})
-                            st.session_state.user = res_otp.user
-                            if res_otp.session:
-                                st.session_state.access_token = res_otp.session.access_token
-                                st.session_state.refresh_token = res_otp.session.refresh_token
-                                supabase.postgrest.auth(res_otp.session.access_token)
+                            establish_authenticated_session(res_otp.user, res_otp.session, email_fallback=verify_email.strip(), hours=4)
                             st.session_state.is_resetting_password = False
                             st.success("🎉 ¡Tu contraseña ha sido actualizada con éxito! Ingresando a la plataforma...")
                             st.rerun()
@@ -300,20 +378,12 @@ def login_screen():
                         params = urlparse.parse_qs(parsed.fragment) or urlparse.parse_qs(parsed.query)
                         if "access_token" in params and "refresh_token" in params:
                             res_sess = supabase.auth.set_session(params["access_token"][0], params["refresh_token"][0])
-                            st.session_state.user = res_sess.user
-                            if res_sess.session:
-                                st.session_state.access_token = res_sess.session.access_token
-                                st.session_state.refresh_token = res_sess.session.refresh_token
-                                supabase.postgrest.auth(res_sess.session.access_token)
+                            establish_authenticated_session(res_sess.user, res_sess.session, hours=4)
                             st.session_state.is_resetting_password = True
                             st.rerun()
                         elif "code" in params:
                             res_c = supabase.auth.exchange_code_for_session({"auth_code": params["code"][0]})
-                            st.session_state.user = res_c.user
-                            if res_c.session:
-                                st.session_state.access_token = res_c.session.access_token
-                                st.session_state.refresh_token = res_c.session.refresh_token
-                                supabase.postgrest.auth(res_c.session.access_token)
+                            establish_authenticated_session(res_c.user, res_c.session, hours=4)
                             st.session_state.is_resetting_password = True
                             st.rerun()
                         else:
@@ -371,13 +441,11 @@ if "access_token" in st.query_params:
         acc_token = st.query_params.get("access_token")
         ref_token = st.query_params.get("refresh_token", "")
         res_session = supabase.auth.set_session(acc_token, ref_token)
-        st.session_state.user = res_session.user
-        if res_session.session:
-            st.session_state.access_token = res_session.session.access_token
-            st.session_state.refresh_token = res_session.session.refresh_token
-            supabase.postgrest.auth(res_session.session.access_token)
+        establish_authenticated_session(res_session.user, res_session.session, hours=4)
         st.session_state.is_resetting_password = True
-        st.query_params.clear()
+        st.query_params.pop("access_token", None)
+        st.query_params.pop("refresh_token", None)
+        st.query_params.pop("type", None)
         st.rerun()
     except Exception as err_token:
         st.warning(f"Error al validar token de recuperación: {err_token}")
@@ -386,13 +454,9 @@ if "access_token" in st.query_params:
 elif "code" in st.query_params:
     try:
         res_code = supabase.auth.exchange_code_for_session({"auth_code": st.query_params["code"]})
-        st.session_state.user = res_code.user
-        if res_code.session:
-            st.session_state.access_token = res_code.session.access_token
-            st.session_state.refresh_token = res_code.session.refresh_token
-            supabase.postgrest.auth(res_code.session.access_token)
+        establish_authenticated_session(res_code.user, res_code.session, hours=4)
         st.session_state.is_resetting_password = True
-        st.query_params.clear()
+        st.query_params.pop("code", None)
         st.rerun()
     except Exception as err_code:
         st.warning(f"El enlace de recuperación ya fue utilizado o expiró: {err_code}")
@@ -479,6 +543,10 @@ with col_usr2:
         st.rerun()
 with col_usr3:
     if st.button(t("logout_button"), use_container_width=True):
+        cur_sid = st.query_params.get("session_id")
+        if cur_sid:
+            delete_auth_session(cur_sid)
+            st.query_params.pop("session_id", None)
         try:
             supabase.auth.sign_out()
         except Exception:
@@ -489,6 +557,7 @@ with col_usr3:
         st.session_state.is_resetting_password = False
         st.session_state.pop("main_nav_radio", None)
         st.session_state.pop("nav_initialized", None)
+        st.session_state.pop("session_expired_notice", None)
         st.rerun()
 
 st.divider()
@@ -797,6 +866,27 @@ st.sidebar.radio(
 )
 st.sidebar.divider()
 
+# Sincronización manual SQLite -> Supabase
+with st.sidebar.expander("☁️ Sincronización Nube", expanded=False):
+    st.caption("Respalda tus postulaciones de SQLite local a tu cuenta de Supabase.")
+    if st.button("🔄 Sincronizar SQLite a Supabase", key="btn_sync_sidebar", use_container_width=True):
+        if st.session_state.user:
+            prog_bar = st.progress(0.0)
+            status_txt = st.empty()
+            def cb_side(curr, tot, msg):
+                prog_bar.progress(curr / tot)
+                status_txt.caption(msg)
+            from sync_service import sync_sqlite_to_supabase
+            res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id, progress_callback=cb_side)
+            status_txt.empty()
+            prog_bar.empty()
+            st.success(f"¡Sincronizado! {res_sync['inserted']} subidas, {res_sync['skipped']} omitidas.")
+            st.rerun()
+        else:
+            st.warning("Debes iniciar sesión para sincronizar.")
+
+st.sidebar.divider()
+
 # 2. Menú de navegación
 st.sidebar.title(t("nav_title"))
 st.sidebar.caption(t("nav_caption"))
@@ -806,7 +896,7 @@ MENU_KEYS = [
     "view_apps",
     "analyzer",
     "coach",
-    "cv_builder",
+    "cv_improver",
     "stats",
     "profile",
     "dashboard"
@@ -817,7 +907,7 @@ menu_label_map = {
     "view_apps": t("nav_view_apps"),
     "analyzer": t("nav_analyzer"),
     "coach": t("nav_coach"),
-    "cv_builder": t("nav_cv_builder"),
+    "cv_improver": "✨ CV Improver (AI)" if st.session_state.get("lang") == "en" else "✨ Mejorar CV con IA",
     "stats": t("nav_stats"),
     "profile": t("nav_profile"),
     "dashboard": t("nav_dashboard")
@@ -827,6 +917,9 @@ menu_label_map = {
 if "nav_initialized" not in st.session_state:
     st.session_state["main_nav_radio"] = "add_app"
     st.session_state["nav_initialized"] = True
+
+if st.session_state.get("main_nav_radio") not in MENU_KEYS:
+    st.session_state["main_nav_radio"] = "cv_improver" if "cv_improver" in MENU_KEYS else "add_app"
 
 menu_opcion = st.sidebar.radio(
     t("nav_select_section"),
@@ -847,7 +940,7 @@ if menu_opcion in ("dashboard", "📊 Dashboard"):
     try:
         # 1. Extraemos los datos de la nube (Supabase ya filtra por user_id automáticamente gracias al RLS)
         response = supabase.table("applications").select("*").execute()
-        datos_dashboard = response.data
+        datos_dashboard = response.data or []
     except Exception as e:
         if "JWT expired" in str(e):
             st.warning(t("session_expired_warning"))
@@ -856,9 +949,30 @@ if menu_opcion in ("dashboard", "📊 Dashboard"):
             st.error(t("dashboard_load_error", error=e))
             datos_dashboard = []
 
+    usando_sqlite_dash = False
+    if not datos_dashboard:
+        apps_locales = get_all_applications()
+        if apps_locales:
+            datos_dashboard = [dict(a) for a in apps_locales]
+            usando_sqlite_dash = True
+
     if not datos_dashboard:
         st.info(t("dashboard_empty"))
     else:
+        if usando_sqlite_dash:
+            col_sd1, col_sd2 = st.columns([3, 1])
+            with col_sd1:
+                st.info(f"💡 Mostrando {len(datos_dashboard)} postulaciones desde SQLite local.")
+                st.caption("Tus postulaciones aún no están en la nube de Supabase.")
+            with col_sd2:
+                st.write("")
+                if st.button("🚀 Sincronizar a Supabase", key="btn_sync_dash", use_container_width=True):
+                    with st.spinner("Subiendo postulaciones a Supabase..."):
+                        from sync_service import sync_sqlite_to_supabase
+                        res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id)
+                        st.success(f"¡Sincronización completada! {res_sync['inserted']} postulaciones subidas a la nube.")
+                        st.rerun()
+
         # 2. Pasamos los datos a Pandas para que tus gráficos originales funcionen
         df = pd.DataFrame(datos_dashboard)
 
@@ -1139,14 +1253,47 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                     except Exception:
                         pass
 
-            col_btn, _ = st.columns([1, 2])
-            with col_btn:
-                btn_analizar = st.button(t("profile_btn_analyze_cv"), type="primary", disabled=not bool(api_key_activa))
+            detected_lang_profile = detect_resume_language(texto_cv)
+            if detected_lang_profile == "en":
+                st.info("🌐 **Idioma detectado en tu currículum:** 🇺🇸 **Inglés**. Recomendamos analizar en inglés para respetar el idioma nativo de tu documento.")
+            else:
+                st.info("🌐 **Idioma detectado en tu currículum:** 🇪🇸 **Español**.")
 
-            if btn_analizar:
-                with st.spinner(t("profile_cv_analyzing_spinner")):
+            col_btn_es, col_btn_en = st.columns(2)
+            with col_btn_es:
+                is_es = (detected_lang_profile == "es")
+                lbl_es = "🇪🇸 Analizar en Español (Detectado)" if is_es else "🇪🇸 Analizar en Español"
+                btn_analizar_es = st.button(
+                    lbl_es,
+                    type="primary" if is_es else "secondary",
+                    disabled=not bool(api_key_activa),
+                    key="btn_analizar_cv_prof_es",
+                    use_container_width=True
+                )
+            with col_btn_en:
+                is_en = (detected_lang_profile == "en")
+                lbl_en = "🇺🇸 Analizar en Inglés (Detectado)" if is_en else "🇺🇸 Analizar en Inglés"
+                btn_analizar_en = st.button(
+                    lbl_en,
+                    type="primary" if is_en else "secondary",
+                    disabled=not bool(api_key_activa),
+                    key="btn_analizar_cv_prof_en",
+                    use_container_width=True
+                )
+
+            if btn_analizar_es:
+                with st.spinner("🤖 Analizando y extrayendo perfil en Español con IA..."):
                     try:
-                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa)
+                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa, target_language="es")
+                        st.session_state["pending_resume_review"] = resultado
+                        st.rerun()
+                    except Exception as err:
+                        st.error(t("profile_ai_error", error=err))
+
+            if btn_analizar_en:
+                with st.spinner("🤖 Analyzing and extracting profile in English with AI..."):
+                    try:
+                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa, target_language="en")
                         st.session_state["pending_resume_review"] = resultado
                         st.rerun()
                     except Exception as err:
@@ -1457,6 +1604,8 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
     try:
         resp_apps = supabase.table("applications").select("id, company, position, job_url, notes").order("id", desc=False).execute()
         apps_para_dropdown = resp_apps.data or []
+        if not apps_para_dropdown:
+            apps_para_dropdown = get_all_applications()
     except Exception:
         apps_para_dropdown = get_all_applications()
 
@@ -1868,6 +2017,7 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
 # ==============================================================================
 elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
 
+    usando_sqlite_view = False
     # 1. Obtenemos todas las aplicaciones desde Supabase
     try:
         # Supabase devuelve los datos directamente como una lista de diccionarios
@@ -1918,12 +2068,37 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
             st.warning(f"Aviso al sincronizar con la nube: {e}")
         try:
             todas_las_apps = get_all_applications()
+            usando_sqlite_view = True
         except Exception:
             todas_las_apps = []
 
     if not todas_las_apps:
+        # Fallback a SQLite si Supabase devolvió lista vacía
+        try:
+            apps_locales = get_all_applications()
+            if apps_locales:
+                todas_las_apps = [dict(a) for a in apps_locales]
+                usando_sqlite_view = True
+        except Exception:
+            pass
+
+    if not todas_las_apps:
         st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera.")
     else:
+        if usando_sqlite_view:
+            col_sv1, col_sv2 = st.columns([3, 1])
+            with col_sv1:
+                st.info(f"💡 Mostrando {len(todas_las_apps)} postulaciones desde SQLite local.")
+                st.caption("Tus aplicaciones están guardadas localmente. Súbelas a Supabase para tenerlas en la nube.")
+            with col_sv2:
+                st.write("")
+                if st.button("🚀 Sincronizar a Supabase", key="btn_sync_view_apps", use_container_width=True):
+                    with st.spinner("Subiendo aplicaciones a Supabase..."):
+                        from sync_service import sync_sqlite_to_supabase
+                        res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id)
+                        st.success(f"¡Sincronizadas {res_sync['inserted']} aplicaciones a Supabase!")
+                        st.rerun()
+
         # Convertimos la lista de diccionarios a un DataFrame de pandas para facilitar búsquedas y filtros
         df = pd.DataFrame(todas_las_apps)
 
@@ -2604,6 +2779,8 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
     try:
         response = supabase.table("applications").select("*").order("id", desc=True).execute()
         todas_las_apps = response.data or []
+        if not todas_las_apps:
+            todas_las_apps = get_all_applications()
     except Exception:
         try:
             todas_las_apps = get_all_applications()
@@ -2642,647 +2819,8 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
 
 
 # ==============================================================================
-# PÁGINA 6: CV BUILDER & AI OPTIMIZER (Fase 5.6a: Editor Híbrido de Bullets)
+# PÁGINA: CV IMPROVER (Optimización de Bullets y Rediseño Visual con IA)
 # ==============================================================================
-elif menu_opcion in ("cv_builder", "📄 CV Builder", "📄 CV Builder & AI Optimizer"):
-    st.subheader(t("cv_builder_title"))
-    st.caption(t("cv_builder_caption"))
-
-    # --------------------------------------------------------------------------
-    # IMPORTACIÓN DIRECTA DE RESUME FRESCO DENTRO DE CV BUILDER
-    # --------------------------------------------------------------------------
-    with st.expander("📄 Importar / Actualizar Currículum Fresco (PDF, DOCX o TXT)", expanded=False):
-        st.caption("Carga un nuevo currículum para que la IA extraiga automáticamente tu experiencia, educación y habilidades directamente aquí.")
-        archivo_cv_builder = st.file_uploader(
-            "Selecciona tu archivo de currículum:",
-            type=["pdf", "docx", "txt"],
-            key="uploader_cv_builder_direct"
-        )
-        if archivo_cv_builder is not None:
-            try:
-                texto_cv_builder = extract_resume_text(archivo_cv_builder)
-                st.success(f"✅ Archivo '{archivo_cv_builder.name}' leído ({len(texto_cv_builder):,} caracteres extraídos).")
-
-                api_key_activa_cvb = get_api_key()
-                if not api_key_activa_cvb:
-                    st.warning("⚠️ No se detectó GEMINI_API_KEY. Ingresa tu API Key de Gemini:")
-                    k_in = st.text_input("Gemini API Key:", type="password", key="key_cvb_input")
-                    if k_in:
-                        api_key_activa_cvb = k_in.strip()
-                        os.environ["GEMINI_API_KEY"] = api_key_activa_cvb
-
-                if st.button("🚀 Analizar CV y Extraer Información con IA", type="primary", disabled=not bool(api_key_activa_cvb), key="btn_parse_cvb_direct"):
-                    with st.spinner("🤖 La IA está leyendo tu currículum y estructurando tu experiencia, bullets, habilidades y educación..."):
-                        try:
-                            resultado_cvb = extract_skills_and_profile_from_resume(texto_cv_builder, api_key=api_key_activa_cvb)
-                            st.session_state["pending_resume_review_cvb"] = resultado_cvb
-                            st.rerun()
-                        except Exception as e_ai:
-                            st.error(f"Error con IA: {e_ai}")
-            except Exception as e_read:
-                st.error(f"Error al leer archivo: {e_read}")
-
-    # Pantalla de revisión previa dentro de CV Builder si hay una extracción pendiente
-    if "pending_resume_review_cvb" in st.session_state and st.session_state["pending_resume_review_cvb"]:
-        rev_cvb = st.session_state["pending_resume_review_cvb"]
-        st.markdown(f"### {t('profile_review_title')}")
-        st.caption(t("profile_review_caption"))
-
-        with st.container(border=True):
-            # A. Perfil General
-            st.markdown(f"#### 👤 {t('profile_card_title')}")
-            prof_rev = rev_cvb.get("profile", {})
-            c_p1, c_p2 = st.columns(2)
-            with c_p1:
-                rev_name = st.text_input(t("profile_field_name"), value=prof_rev.get("full_name") or "", key="cvb_rev_name")
-                rev_email = st.text_input(t("profile_field_email"), value=prof_rev.get("email") or "", key="cvb_rev_email")
-                rev_loc = st.text_input(t("profile_field_location"), value=prof_rev.get("location") or "", key="cvb_rev_loc")
-            with c_p2:
-                rev_title = st.text_input(t("profile_field_title"), value=prof_rev.get("current_title") or "", key="cvb_rev_title")
-                rev_phone = st.text_input(t("profile_field_phone"), value=prof_rev.get("phone") or "", key="cvb_rev_phone")
-            rev_sum = st.text_area(t("profile_field_summary"), value=prof_rev.get("summary") or "", height=80, key="cvb_rev_sum")
-
-            # B. Habilidades Extraídas
-            skills_rev = rev_cvb.get("skills", [])
-            st.markdown(f"#### {t('profile_review_skills_header', count=len(skills_rev))}")
-            if skills_rev:
-                skills_tags = [f"**{s['skill_name']}** (`{s['category']}`)" for s in skills_rev]
-                st.markdown(" • ".join(skills_tags))
-
-            # C. Experiencia Laboral Extraída
-            exp_rev = rev_cvb.get("experience", [])
-            st.markdown(f"#### {t('profile_review_exp_header')} ({len(exp_rev)})")
-            
-            reviewed_experiences = []
-            for idx_e, exp_item in enumerate(exp_rev):
-                with st.expander(f"💼 {exp_item.get('position', 'Puesto')} en {exp_item.get('company', 'Empresa')}", expanded=True):
-                    col_ex1, col_ex2 = st.columns(2)
-                    with col_ex1:
-                        c_val = st.text_input(t("profile_review_company"), value=exp_item.get("company", ""), key=f"cvb_rev_comp_{idx_e}")
-                        p_val = st.text_input(t("profile_review_position"), value=exp_item.get("position", ""), key=f"cvb_rev_pos_{idx_e}")
-                    with col_ex2:
-                        cur_val = st.checkbox(t("profile_review_current_job"), value=bool(exp_item.get("is_current")), key=f"cvb_rev_cur_{idx_e}")
-                        col_dt1, col_dt2 = st.columns(2)
-                        with col_dt1:
-                            s_date_init = exp_item.get("start_date") or ""
-                            s_val = st.text_input(t("profile_review_start_date"), value=s_date_init, key=f"cvb_rev_sdate_{idx_e}")
-                            if not s_date_init and exp_item.get("start_date_raw"):
-                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('start_date_raw')}')")
-                        with col_dt2:
-                            e_date_init = exp_item.get("end_date") or ""
-                            e_val = st.text_input(
-                                t("profile_review_end_date"),
-                                value=e_date_init,
-                                placeholder="Trabajo actual (en curso)" if cur_val else "YYYY-MM",
-                                help="Si marcas 'Trabajo actual', este campo se ignorará y se guardará como trabajo en curso.",
-                                key=f"cvb_rev_edate_{idx_e}"
-                            )
-                            if not cur_val and not e_val and exp_item.get("end_date_raw"):
-                                st.caption(f"{t('profile_review_date_warning')} (Original: '{exp_item.get('end_date_raw')}')")
-
-                    raw_bullets_str = "\n".join(exp_item.get("bullets", []))
-                    bullets_area = st.text_area(t("profile_review_bullets_label"), value=raw_bullets_str, height=100, key=f"cvb_rev_bullets_{idx_e}")
-                    clean_bullets = [b.strip() for b in bullets_area.splitlines() if b.strip()]
-
-                    reviewed_experiences.append({
-                        "company": c_val.strip(),
-                        "position": p_val.strip(),
-                        "start_date": s_val.strip() if s_val.strip() else None,
-                        "end_date": None if cur_val else (e_val.strip() if e_val.strip() else None),
-                        "is_current": cur_val,
-                        "bullets": clean_bullets,
-                        "order_index": idx_e + 1
-                    })
-
-            # D. Educación Extraída
-            edu_rev = rev_cvb.get("education", [])
-            st.markdown(f"#### {t('profile_review_edu_header')} ({len(edu_rev)})")
-            reviewed_education = []
-            for idx_ed, edu_item in enumerate(edu_rev):
-                with st.expander(f"🎓 {edu_item.get('credential', 'Certificación')} — {edu_item.get('institution', 'Institución')}", expanded=True):
-                    col_ed1, col_ed2 = st.columns(2)
-                    with col_ed1:
-                        inst_val = st.text_input(t("profile_review_institution"), value=edu_item.get("institution", ""), key=f"cvb_rev_inst_{idx_ed}")
-                        cred_val = st.text_input(t("profile_review_credential"), value=edu_item.get("credential", ""), key=f"cvb_rev_cred_{idx_ed}")
-                    with col_ed2:
-                        col_edd1, col_edd2 = st.columns(2)
-                        with col_edd1:
-                            eds_init = edu_item.get("start_date") or ""
-                            eds_val = st.text_input(t("profile_review_start_date"), value=eds_init, key=f"cvb_rev_eds_{idx_ed}")
-                            if not eds_init and edu_item.get("start_date_raw"):
-                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('start_date_raw')}')")
-                        with col_edd2:
-                            ede_init = edu_item.get("end_date") or ""
-                            ede_val = st.text_input(t("profile_review_end_date"), value=ede_init, key=f"cvb_rev_ede_{idx_ed}")
-                            if not ede_init and edu_item.get("end_date_raw"):
-                                st.caption(f"{t('profile_review_date_warning')} (Original: '{edu_item.get('end_date_raw')}')")
-
-                    reviewed_education.append({
-                        "institution": inst_val.strip(),
-                        "credential": cred_val.strip(),
-                        "start_date": eds_val.strip() if eds_val.strip() else None,
-                        "end_date": ede_val.strip() if ede_val.strip() else None,
-                        "order_index": idx_ed + 1
-                    })
-
-            # Botones de Acción
-            st.divider()
-            col_save_btn, col_disc_btn = st.columns([2, 1])
-            with col_save_btn:
-                if st.button(t("profile_review_btn_save"), type="primary", use_container_width=True, key="btn_confirm_cvb_save"):
-                    save_user_profile(
-                        full_name=rev_name.strip() or None,
-                        current_title=rev_title.strip() or None,
-                        email=rev_email.strip() or None,
-                        phone=rev_phone.strip() or None,
-                        location=rev_loc.strip() or None,
-                        summary=rev_sum.strip() or None
-                    )
-                    if skills_rev:
-                        add_user_skills_bulk(skills_rev, source="Resume")
-                    save_parsed_resume_data(reviewed_experiences, reviewed_education, replace_existing=True)
-
-                    del st.session_state["pending_resume_review_cvb"]
-                    st.toast(t("profile_review_saved_toast"), icon="🎉")
-                    st.rerun()
-
-            with col_disc_btn:
-                if st.button(t("profile_review_btn_discard"), use_container_width=True, key="btn_discard_cvb_review"):
-                    del st.session_state["pending_resume_review_cvb"]
-                    st.toast(t("profile_review_discarded_toast"), icon="ℹ️")
-                    st.rerun()
-
-
-    # 1. Entrada opcional de la vacante (Job Description)
-    job_description = st.text_area(
-        t("cv_job_desc_label"),
-        placeholder=t("cv_job_desc_placeholder"),
-        height=110,
-        key="cv_job_desc_input"
-    )
-
-    # Obtenemos las experiencias, bullets y educación persistidos en SQLite
-    experiences = get_all_experiences()
-    bullets = get_all_resume_bullets()
-    education = get_all_education()
-
-    # Mapeamos bullets por experience_id y por sección para compatibilidad
-    bullets_by_exp = {}
-    sections_dict = {}
-    for b in bullets:
-        bullets_by_exp.setdefault(b["experience_id"], []).append(b)
-        sections_dict.setdefault(b.get("section", "Experiencia"), []).append(b)
-
-    # Fila de modo y botón de Match Score completo (Fase 5.6b)
-    col_mode_info, col_calc_match = st.columns([3, 2])
-    with col_mode_info:
-        if job_description.strip():
-            st.info(f"🎯 **Modo Activo: {t('cv_mode_tailored')}** — La IA adaptará tus bullets incorporando requerimientos y palabras clave de la vacante pegada.")
-        else:
-            st.info(f"⚡ **Modo Activo: {t('cv_mode_general')}** — La IA optimizará tus bullets aplicando la Fórmula de Impacto de Google (Acción + Tecnología + Métricas de resultado).")
-
-    with col_calc_match:
-        # El botón de Match Score solo se muestra si hay una vacante pegada
-        if job_description.strip():
-            if st.button(t("cv_btn_calculate_match"), type="primary", use_container_width=True, key="btn_cv_calculate_match"):
-                # Construimos el texto completo del resume concatenando perfil, experiencias y educación
-                user_prof = get_user_profile()
-                resume_lines = []
-                if user_prof:
-                    candidato_titulo = f"Candidato: {user_prof.get('full_name') or ''} - {user_prof.get('current_title') or ''}"
-                    resume_lines.append(candidato_titulo)
-                    if user_prof.get("summary"):
-                        resume_lines.append(f"Resumen Profesional: {user_prof['summary']}")
-
-                for exp in experiences:
-                    fechas_exp = f"({exp['start_date'] or ''} - {'Presente' if exp['is_current'] else (exp['end_date'] or '')})"
-                    resume_lines.append(f"\nExperiencia: {exp['position']} en {exp['company']} {fechas_exp}:")
-                    for b_item in bullets_by_exp.get(exp["id"], []):
-                        resume_lines.append(f"- {b_item['current_text']}")
-
-                if education:
-                    resume_lines.append("\nEducación y Certificaciones:")
-                    for edu in education:
-                        fechas_edu = f"({edu['start_date'] or ''} - {edu['end_date'] or ''})"
-                        resume_lines.append(f"- {edu['credential']} en {edu['institution']} {fechas_edu}")
-
-                full_resume_text = "\n".join(resume_lines)
-
-                with st.spinner(t("cv_spinner_evaluating")):
-                    try:
-                        # Reutilizamos exactamente el mismo motor y mega-prompt de la Fase 5.2
-                        resultado_match = analyze_job_description(
-                            job_text=job_description.strip(),
-                            candidate_text=full_resume_text,
-                            api_key=get_api_key()
-                        )
-                        st.session_state["cv_match_result"] = resultado_match
-                        st.toast(t("cv_match_success_toast"), icon="🎯")
-                        st.rerun()
-                    except Exception as err:
-                        st.error(f"❌ Error al calcular match con la vacante: {err}")
-
-    st.divider()
-
-    # 2. Pantalla Dividida: Editor Interactivo (Izquierda) vs Vista Previa / Match (Derecha)
-    col_editor, col_preview = st.columns([1, 1], gap="large")
-
-    # --------------------------------------------------------------------------
-    # COLUMNA IZQUIERDA: EDITOR INTERACTIVO DE EXPERIENCIA Y BULLETS
-    # --------------------------------------------------------------------------
-    with col_editor:
-        st.markdown(f"### {t('cv_editor_col_title')}")
-
-        # Formulario para agregar una nueva experiencia laboral estructurada
-        with st.expander("➕ Agregar nueva experiencia laboral", expanded=False):
-            with st.form("form_add_new_experience"):
-                c_ne1, c_ne2 = st.columns(2)
-                with c_ne1:
-                    ne_comp = st.text_input("Empresa *", placeholder="Ej. Amazon, Google, StartUp...")
-                    ne_pos = st.text_input("Puesto / Cargo *", placeholder="Ej. Senior Cloud Engineer...")
-                with c_ne2:
-                    ne_cur = st.checkbox("¿Es tu trabajo actual?", value=False)
-                    c_ned1, c_ned2 = st.columns(2)
-                    with c_ned1:
-                        ne_sdate = st.text_input("Inicio (YYYY-MM)", placeholder="2022-01")
-                    with c_ned2:
-                        ne_edate = st.text_input("Fin (YYYY-MM)", placeholder="2024-05", help="Ignorado si marcas '¿Es tu trabajo actual?'")
-                
-                ne_first_bullet = st.text_area("Primer logro / bullet (opcional)", placeholder="Logro o responsabilidad inicial...", height=70)
-                btn_submit_exp = st.form_submit_button("💾 Guardar Nueva Experiencia", type="primary")
-
-                if btn_submit_exp:
-                    if ne_comp.strip() and ne_pos.strip():
-                        new_eid = add_experience_entry(
-                            company=ne_comp.strip(),
-                            position=ne_pos.strip(),
-                            start_date=ne_sdate.strip() if ne_sdate.strip() else None,
-                            end_date=None if ne_cur else (ne_edate.strip() if ne_edate.strip() else None),
-                            is_current=ne_cur
-                        )
-                        if ne_first_bullet.strip():
-                            add_resume_bullet(new_eid, ne_first_bullet.strip())
-                        st.toast("✅ Experiencia agregada exitosamente", icon="💼")
-                        st.rerun()
-                    else:
-                        st.error("Por favor completa al menos la empresa y el cargo.")
-
-        if not experiences:
-            st.warning(t("cv_no_bullets"))
-            if st.button(t("cv_btn_reset_defaults")):
-                seed_default_resume_bullets()
-                st.rerun()
-        else:
-            for exp in experiences:
-                exp_id = exp["id"]
-                exp_bullets = bullets_by_exp.get(exp_id, [])
-                dates_badge = f"{exp['start_date'] or ''} — {'Presente' if exp['is_current'] else (exp['end_date'] or '')}"
-
-                with st.container(border=True):
-                    # Cabecera de la Experiencia
-                    st.markdown(f"#### 🏢 {exp['position']} — **{exp['company']}**")
-                    st.caption(f"📅 **Período:** `{dates_badge}`")
-
-                    # Expander para editar la empresa, puesto y fechas
-                    with st.expander("✏️ Editar datos de este puesto / empresa", expanded=False):
-                        with st.form(f"form_edit_exp_{exp_id}"):
-                            ced_1, ced_2 = st.columns(2)
-                            with ced_1:
-                                upd_comp = st.text_input("Empresa", value=exp["company"], key=f"upd_c_{exp_id}")
-                                upd_pos = st.text_input("Puesto", value=exp["position"], key=f"upd_p_{exp_id}")
-                            with ced_2:
-                                upd_cur = st.checkbox("Trabajo actual", value=bool(exp["is_current"]), key=f"upd_cur_{exp_id}")
-                                c_updd1, c_updd2 = st.columns(2)
-                                with c_updd1:
-                                    upd_s = st.text_input("Inicio (YYYY-MM)", value=exp["start_date"] or "", key=f"upd_s_{exp_id}")
-                                with c_updd2:
-                                    upd_e = st.text_input("Fin (YYYY-MM)", value=exp["end_date"] or "", placeholder="YYYY-MM", help="Ignorado si marcas 'Trabajo actual'", key=f"upd_e_{exp_id}")
-
-                            if st.form_submit_button("💾 Guardar Cambios de Puesto"):
-                                update_experience_entry(
-                                    exp_id,
-                                    upd_comp,
-                                    upd_pos,
-                                    upd_s.strip() if upd_s.strip() else None,
-                                    None if upd_cur else (upd_e.strip() if upd_e.strip() else None),
-                                    upd_cur
-                                )
-                                st.toast("Datos actualizados", icon="💾")
-                                st.rerun()
-
-                    # Bullets pertenecientes a esta experiencia
-                    if not exp_bullets:
-                        st.info("Aún no hay viñetas/bullets para este puesto.")
-                    else:
-                        for b in exp_bullets:
-                            b_id = b["id"]
-                            with st.container(border=True):
-                                pending_prop_key = f"cv_pending_improvement_{b_id}"
-                                pending_mode_key = f"cv_pending_mode_{b_id}"
-                                pending_lang_key = f"cv_pending_lang_{b_id}"
-
-                                if pending_prop_key in st.session_state:
-                                    st.caption(f"📌 {t('cv_current_label')}")
-                                    st.write(b["current_text"])
-
-                                    active_mode = t("cv_mode_tailored") if st.session_state.get(pending_mode_key) == "tailored" else t("cv_mode_general")
-                                    pending_lang = st.session_state.get(pending_lang_key, "es")
-                                    lang_badge = "🇪🇸 Español" if pending_lang == "es" else "🇺🇸 English"
-                                    st.success(f"**{t('cv_improvement_pending', mode=active_mode)} ({lang_badge})**\n\n{st.session_state[pending_prop_key]}")
-
-                                    c_acc, c_disc = st.columns(2)
-                                    with c_acc:
-                                        if st.button(t("cv_btn_accept"), key=f"btn_accept_{b_id}", type="primary"):
-                                            # Persistencia real en SQLite tras confirmación explícita
-                                            update_resume_bullet(b_id, st.session_state[pending_prop_key])
-                                            del st.session_state[pending_prop_key]
-                                            if pending_mode_key in st.session_state:
-                                                del st.session_state[pending_mode_key]
-                                            if pending_lang_key in st.session_state:
-                                                del st.session_state[pending_lang_key]
-                                            st.toast(t("cv_bullet_saved_toast"), icon="💾")
-                                            st.rerun()
-                                    with c_disc:
-                                        if st.button(t("cv_btn_discard"), key=f"btn_discard_{b_id}"):
-                                            # Descartar propuesta en session_state sin alterar SQLite
-                                            del st.session_state[pending_prop_key]
-                                            if pending_mode_key in st.session_state:
-                                                del st.session_state[pending_mode_key]
-                                            if pending_lang_key in st.session_state:
-                                                del st.session_state[pending_lang_key]
-                                            st.info(t("cv_improvement_discarded"))
-                                            st.rerun()
-                                else:
-                                    # Vista normal de edición manual
-                                    edited_text = st.text_area(
-                                        t("cv_bullet_text_label"),
-                                        value=b["current_text"],
-                                        key=f"txt_bullet_val_{b_id}",
-                                        height=80,
-                                        label_visibility="collapsed"
-                                    )
-
-                                    b_c1, b_c2, b_c3, b_c4 = st.columns([2.2, 2.2, 0.8, 0.8])
-                                    with b_c1:
-                                        if st.button(t("cv_btn_improve_es"), key=f"btn_ai_es_{b_id}", help="Reescribir con IA en Español"):
-                                            with st.spinner(f"🤖 {t('cv_spinner_improve_es')}"):
-                                                improved = rewrite_resume_bullet(
-                                                    current_bullet=edited_text,
-                                                    job_description=job_description,
-                                                    language="es"
-                                                )
-                                                st.session_state[pending_prop_key] = improved
-                                                st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
-                                                st.session_state[pending_lang_key] = "es"
-                                                st.rerun()
-                                    with b_c2:
-                                        if st.button(t("cv_btn_improve_en"), key=f"btn_ai_en_{b_id}", help="Rewrite with AI in English"):
-                                            with st.spinner(f"🤖 {t('cv_spinner_improve_en')}"):
-                                                improved = rewrite_resume_bullet(
-                                                    current_bullet=edited_text,
-                                                    job_description=job_description,
-                                                    language="en"
-                                                )
-                                                st.session_state[pending_prop_key] = improved
-                                                st.session_state[pending_mode_key] = "tailored" if bool(job_description and job_description.strip()) else "general"
-                                                st.session_state[pending_lang_key] = "en"
-                                                st.rerun()
-                                    with b_c3:
-                                        if edited_text != b["current_text"]:
-                                            if st.button("💾", key=f"btn_save_txt_{b_id}", help=t("btn_save")):
-                                                update_resume_bullet(b_id, edited_text)
-                                                st.toast(t("cv_bullet_saved_toast"), icon="💾")
-                                                st.rerun()
-                                    with b_c4:
-                                        if st.button("🗑️", key=f"btn_del_b_{b_id}", help=t("btn_delete")):
-                                            delete_resume_bullet(b_id)
-                                            st.toast(t("cv_bullet_deleted_toast"), icon="🗑️")
-                                            st.rerun()
-
-                    # Formulario para agregar un nuevo bullet a esta experiencia
-                    with st.expander(f"➕ Agregar viñeta / bullet a este puesto", expanded=False):
-                        with st.form(f"form_add_b_{exp_id}"):
-                            new_b_text = st.text_area("Texto del logro o responsabilidad:", placeholder="Ej. Lideré la migración de...", height=75)
-                            if st.form_submit_button("➕ Agregar viñeta", type="primary"):
-                                if new_b_text.strip():
-                                    add_resume_bullet(exp_id, new_b_text.strip())
-                                    st.toast("Bullet agregado con éxito", icon="✅")
-                                    st.rerun()
-                                else:
-                                    st.error("El texto del bullet no puede estar vacío.")
-
-                    # Botón para eliminar la experiencia completa
-                    with st.expander("🗑️ Eliminar este puesto completo", expanded=False):
-                        st.caption("Esta acción eliminará el puesto y todos sus bullets asociados.")
-                        if st.button(f"Eliminar {exp['position']} permanentemente", key=f"btn_del_exp_{exp_id}", type="secondary"):
-                            delete_experience_entry(exp_id)
-                            st.toast("Experiencia eliminada", icon="🗑️")
-                            st.rerun()
-
-    # --------------------------------------------------------------------------
-    # COLUMNA DERECHA: PESTAÑAS DE MATCH SCORE Y VISTA PREVIA DEL PDF
-    # --------------------------------------------------------------------------
-    with col_preview:
-        tab_match, tab_preview = st.tabs([
-            f"{t('cv_tab_match_analysis')}",
-            f"{t('cv_tab_pdf_preview')}"
-        ])
-
-        with tab_match:
-            if "cv_match_result" not in st.session_state:
-                if job_description.strip():
-                    st.info(f"💡 Haz clic en el botón superior **'{t('cv_btn_calculate_match')}'** para evaluar tu CV completo contra los requisitos de la vacante.")
-                else:
-                    st.info(f"ℹ️ Pega una descripción de puesto en el campo superior y presiona **'{t('cv_btn_calculate_match')}'** para calcular el Match Score.")
-            else:
-                analisis_match = st.session_state["cv_match_result"]
-                match_data = analisis_match.get("skill_matching", {})
-                strong_m = match_data.get("strong_matches", [])
-                partial_m = match_data.get("partial_matches", [])
-                missing_m = match_data.get("missing_skills", [])
-
-                total_reqs = len(strong_m) + len(partial_m) + len(missing_m)
-                match_score = round(((len(strong_m) + 0.5 * len(partial_m)) / total_reqs) * 100) if total_reqs > 0 else 0
-
-                st.markdown(f"### {t('cv_match_results_title')}")
-
-                # Fila de métricas clave (consistente con Fase 5.2)
-                sc1, sc2, sc3, sc4 = st.columns(4)
-                with sc1:
-                    st.metric(t("cv_metric_estimated_score"), f"{match_score}%")
-                with sc2:
-                    st.metric(t("cv_metric_strong_matches"), f"{len(strong_m)} {t('cv_unit_skills')}")
-                with sc3:
-                    st.metric(t("cv_metric_partial_matches"), f"{len(partial_m)} {t('cv_unit_skills')}")
-                with sc4:
-                    st.metric(t("cv_metric_missing_skills"), f"{len(missing_m)} {t('cv_unit_gaps')}")
-
-                st.markdown("---")
-
-                # Fortalezas y Coincidencias Parciales
-                with st.expander(f"✅ {t('cv_col_matches_title')} ({len(strong_m) + len(partial_m)})", expanded=True):
-                    if strong_m:
-                        st.markdown(t("cv_strong_subhead"))
-                        for sm in strong_m:
-                            n_sk = sm.get("skill", "")
-                            p_sk = sm.get("proficiency", "Intermediate")
-                            r_sk = sm.get("reason", "")
-                            r_str = f" — _{r_sk}_" if r_sk else ""
-                            st.markdown(f"✅ **{n_sk}** `{p_sk}`{r_str}")
-
-                    if partial_m:
-                        st.markdown(t("cv_partial_subhead"))
-                        for pm in partial_m:
-                            n_sk = pm.get("skill", "")
-                            p_sk = pm.get("proficiency", "Beginner")
-                            r_sk = pm.get("reason", "")
-                            r_str = f" — _{r_sk}_" if r_sk else ""
-                            st.markdown(f"⚠️ **{n_sk}** `{p_sk}`{r_str}")
-
-                    if not strong_m and not partial_m:
-                        st.info(t("cv_no_matches_found"))
-
-                # Requisitos Faltantes con sugerencia gratuita de cursos (skill_resources.py)
-                with st.expander(f"❌ {t('cv_col_gaps_title')} ({len(missing_m)})", expanded=True):
-                    if missing_m:
-                        from skill_resources import recommend_resource, recommend_from_ms_learn_catalog
-                        ms_keywords = [
-                            "azure", "microsoft", ".net", "c#", "c sharp", "powershell",
-                            "windows server", "active directory", "sql server", "power bi",
-                            "office 365", "m365", "sharepoint"
-                        ]
-                        for ms in missing_m:
-                            nom = ms.get("skill", "")
-                            imp = ms.get("importance", "Required").strip("[]")
-                            raz = ms.get("reason", "").strip()
-                            if raz and not raz.endswith((".", "!", "?")):
-                                raz += "."
-                            raz_str = f" — _{raz}_" if raz else ""
-
-                            res = ms.get("resource")
-                            if not res:
-                                if any(k in nom.lower() for k in ms_keywords):
-                                    res = recommend_from_ms_learn_catalog(nom)
-                                if not res:
-                                    res = recommend_resource(nom, ms.get("category", "CI/CD & DevOps"))
-
-                            p_title = res.get("title") or res.get("name") or res.get("platform", "Plataforma de estudio")
-                            p_url = res.get("url", "#")
-                            st.markdown(f"❌ **{nom}** `[{imp}]`{raz_str}\n\n&nbsp;&nbsp;&nbsp;&nbsp;{t('cv_learn_free_at')} [{p_title}]({p_url})")
-                    else:
-                        st.success(t("cv_no_gaps_success"))
-
-        with tab_preview:
-            st.markdown(f"### {t('cv_preview_col_title')}")
-
-            # ------------------------------------------------------------------
-            # FASE 5.6c: PANEL DE CONFIGURACIÓN Y EXPORTACIÓN A PDF ATS-FRIENDLY
-            # ------------------------------------------------------------------
-            with st.container(border=True):
-                st.markdown(f"#### {t('cv_pdf_export_title')}")
-
-                col_sel_tmpl, col_color = st.columns([3, 2])
-                with col_sel_tmpl:
-                    template_opciones = {
-                        "moderno": t("cv_template_moderno"),
-                        "ejecutivo": t("cv_template_ejecutivo")
-                    }
-                    tmpl_choice = st.selectbox(
-                        t("cv_template_selector_label"),
-                        options=list(template_opciones.keys()),
-                        format_func=lambda k: template_opciones[k],
-                        key="sb_cv_template_choice"
-                    )
-                with col_color:
-                    color_acento = st.color_picker(
-                        t("cv_color_picker_label"),
-                        value="#1B365D",
-                        key="cp_cv_accent_color"
-                    )
-
-                btn_generate_pdf = st.button(
-                    t("cv_btn_generate_pdf"),
-                    type="primary",
-                    use_container_width=True,
-                    key="btn_trigger_generate_pdf"
-                )
-
-                if btn_generate_pdf:
-                    with st.spinner(t("cv_pdf_generating_spinner")):
-                        p_usuario = get_user_profile()
-                        u_skills = get_all_user_skills()
-                        r_bullets = get_all_resume_bullets()
-                        lang_act = get_current_language()
-
-                        pdf_bytes, txt_verif, err_gen = generate_resume_pdf(
-                            template_name=tmpl_choice,
-                            accent_color=color_acento,
-                            user_profile=p_usuario,
-                            user_skills=u_skills,
-                            resume_bullets=r_bullets,
-                            language=lang_act
-                        )
-
-                        if err_gen:
-                            st.error(t("cv_pdf_err_generation", error=err_gen))
-                        elif not txt_verif or len(txt_verif.strip()) < 50:
-                            st.warning(t("cv_pdf_err_unreadable"))
-                        else:
-                            st.session_state["generated_cv_pdf"] = pdf_bytes
-                            st.session_state["generated_cv_chars"] = len(txt_verif)
-                            st.session_state["generated_cv_tmpl"] = tmpl_choice
-                            st.rerun()
-
-                if "generated_cv_pdf" in st.session_state:
-                    st.success(t("cv_pdf_verified_success", chars=st.session_state.get("generated_cv_chars", 0)))
-                    p_info = get_user_profile() or {}
-                    nombre_descarga = p_info.get("full_name") or "Curriculum"
-                    nombre_limpio = re.sub(r'[^a-zA-Z0-9_-]', '_', nombre_descarga).strip('_')
-                    file_pdf_name = f"CV_{nombre_limpio}_{st.session_state.get('generated_cv_tmpl', 'ats')}.pdf"
-
-                    st.download_button(
-                        label=t("cv_btn_download_pdf"),
-                        data=st.session_state["generated_cv_pdf"],
-                        file_name=file_pdf_name,
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key="btn_download_resume_pdf"
-                    )
-
-            st.markdown(f"##### {t('cv_preview_live_summary')}")
-            with st.container(border=True):
-                perfil_usuario = get_user_profile()
-                if perfil_usuario:
-                    st.markdown(f"### **{perfil_usuario.get('full_name') or 'Candidato'}**")
-                    sub_meta = [p for p in [perfil_usuario.get('current_title'), perfil_usuario.get('location')] if p]
-                    if sub_meta:
-                        st.markdown(f"*{' | '.join(sub_meta)}*")
-                    contactos = [
-                        f"📧 {perfil_usuario.get('email')}" if perfil_usuario.get('email') else "",
-                        f"📱 {perfil_usuario.get('phone')}" if perfil_usuario.get('phone') else ""
-                    ]
-                    linea_contacto = " &nbsp;|&nbsp; ".join([c for c in contactos if c])
-                    if linea_contacto:
-                        st.caption(linea_contacto)
-                    if perfil_usuario.get('summary'):
-                        st.markdown(f"> *{perfil_usuario['summary']}*")
-                    st.divider()
-
-                st.markdown("#### **Experiencia Profesional**")
-                if not experiences:
-                    st.caption(t("no_data"))
-                else:
-                    for exp in experiences:
-                        exp_id = exp["id"]
-                        exp_bullets = bullets_by_exp.get(exp_id, [])
-                        dates_badge = f"{exp['start_date'] or ''} — {'Presente' if exp['is_current'] else (exp['end_date'] or '')}"
-                        st.markdown(f"**{exp['position']}** — {exp['company']} *({dates_badge})*")
-                        for b_item in exp_bullets:
-                            st.markdown(f"- {b_item['current_text']}")
-                        st.write("")
-
-                if education:
-                    st.markdown("#### **Educación y Certificaciones**")
-                    for edu in education:
-                        ed_f = f"({edu['start_date'] or ''} — {edu['end_date'] or ''})" if edu.get("start_date") or edu.get("end_date") else ""
-                        st.markdown(f"**{edu['credential']}** — {edu['institution']} *{ed_f}*")
+elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (AI)"):
+    from cv_improver.ui import render_cv_improver_page
+    render_cv_improver_page()

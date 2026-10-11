@@ -7,7 +7,10 @@ import os
 import io
 from typing import Dict, List, Any, Optional, Tuple
 from jinja2 import Environment, FileSystemLoader
-from xhtml2pdf import pisa
+try:
+    from xhtml2pdf import pisa
+except ImportError:
+    pisa = None
 import pypdf
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -88,20 +91,32 @@ def generate_resume_pdf(
     except Exception as e:
         return None, "", f"Error renderizando template Jinja2: {e}"
 
-    # 6. Compilar HTML a PDF con xhtml2pdf
-    pdf_buffer = io.BytesIO()
+    # 6. Compilar HTML a PDF (Priorizando Chromium / Edge para fidelidad gráfica idéntica)
+    pdf_bytes = None
     try:
-        pisa_status = pisa.pisaDocument(
-            src=io.BytesIO(rendered_html.encode("utf-8")),
-            dest=pdf_buffer,
-            encoding="utf-8"
-        )
-        if pisa_status.err:
-            return None, "", f"xhtml2pdf reportó {pisa_status.err} error(es) durante la compilación."
-    except Exception as e:
-        return None, "", f"Error durante la conversión a PDF con xhtml2pdf: {e}"
+        from cv_improver.renderer.pdf_renderer import _find_chromium_binary, _render_with_chromium
+        chrom_bin = _find_chromium_binary()
+        if chrom_bin:
+            pdf_bytes = _render_with_chromium(rendered_html, chrom_bin)
+    except Exception:
+        pdf_bytes = None
 
-    pdf_bytes = pdf_buffer.getvalue()
+    if not pdf_bytes:
+        if pisa is None:
+            return None, "", "La librería 'xhtml2pdf' no está instalada en el entorno activo. Por favor ejecuta la aplicación con: .venv\\Scripts\\streamlit run app.py"
+
+        pdf_buffer = io.BytesIO()
+        try:
+            pisa_status = pisa.pisaDocument(
+                src=io.BytesIO(rendered_html.encode("utf-8")),
+                dest=pdf_buffer,
+                encoding="utf-8"
+            )
+            if pisa_status.err:
+                return None, "", f"xhtml2pdf reportó {pisa_status.err} error(es) durante la compilación."
+            pdf_bytes = pdf_buffer.getvalue()
+        except Exception as e:
+            return None, "", f"Error durante la conversión a PDF con xhtml2pdf: {e}"
     if not pdf_bytes:
         return None, "", "El buffer de PDF resultante está vacío."
 

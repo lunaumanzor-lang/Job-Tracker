@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ resume.contact.name }} - CV Vanguardia Creative</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+    @page {
+      size: A4;
+      margin: 8mm 10mm 8mm 10mm;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #0F172A;
+      font-size: 8.8pt;
+      line-height: 1.48;
+      background-color: #FFFFFF;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* TOP ACCENT BAR */
+    .top-accent-line {
+      height: 3.5px;
+      background-color: {{ accent_color or '#0284C7' }};
+      margin-bottom: 10px;
+      border-radius: 2px;
+    }
+
+    /* HEADER CONTEMPORÁNEO */
+    .header-layout {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #E2E8F0;
+    }
+
+    .vg-name {
+      font-size: 20pt;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      color: #0F172A;
+      line-height: 1.1;
+      margin-bottom: 3px;
+    }
+
+    .vg-role {
+      font-size: 9.5pt;
+      font-weight: 600;
+      color: {{ accent_color or '#0284C7' }};
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
+    }
+
+    .vg-contact-bar {
+      font-size: 8.2pt;
+      color: #64748B;
+    }
+
+    /* RESUMEN CALLOUT */
+    .vg-callout {
+      background-color: #F8FAFC;
+      border-left: 3.5px solid {{ accent_color or '#0284C7' }};
+      border-radius: 0 5px 5px 0;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 8.7pt;
+      line-height: 1.5;
+      color: #334155;
+      text-align: justify;
+    }
+
+    /* 2 COLUMNAS ASIMÉTRICAS (65% / 35%) */
+    table.vg-grid {
+      width: 100%;
+      border-collapse: collapse;
+      border: none;
+    }
+
+    table.vg-grid td {
+      vertical-align: top;
+      border: none;
+      padding: 0;
+    }
+
+    td.vg-main-col {
+      width: 65%;
+      padding-right: 14px;
+    }
+
+    td.vg-side-col {
+      width: 35%;
+      padding-left: 12px;
+      border-left: 1px solid #E2E8F0;
+    }
+
+    /* ENCABEZADOS DE SECCIÓN */
+    .vg-sec-title {
+      font-size: 9.8pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: {{ accent_color or '#0284C7' }};
+      margin-top: 6px;
+      margin-bottom: 6px;
+      border-bottom: 2px solid {{ accent_color or '#0284C7' }};
+      padding-bottom: 2px;
+    }
+
+    /* EXPERIENCIA TIMELINE */
+    .timeline-job {
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px dashed #E2E8F0;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .job-title-row {
+      font-size: 9.8pt;
+      font-weight: 800;
+      color: #0F172A;
+      line-height: 1.2;
+    }
+
+    .job-comp-row {
+      font-size: 8.7pt;
+      font-weight: 700;
+      color: {{ accent_color or '#0284C7' }};
+    }
+
+    .job-badge-date {
+      display: inline-block;
+      background-color: #F0F9FF;
+      color: {{ accent_color or '#0284C7' }};
+      font-size: 7.5pt;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 4px;
+      border: 1px solid #BAE6FD;
+    }
+
+    ul.vg-bullets {
+      margin-left: 16px;
+      margin-top: 4px;
+    }
+
+    ul.vg-bullets li {
+      font-size: 8.5pt;
+      line-height: 1.48;
+      color: #334155;
+      margin-bottom: 3px;
+      text-align: justify;
+    }
+
+    /* SIDEBAR COMPONENTES */
+    .vg-side-box {
+      margin-bottom: 9px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .vg-side-heading {
+      font-size: 8.2pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #475569;
+      margin-bottom: 5px;
+      border-bottom: 1px solid #E2E8F0;
+      padding-bottom: 2px;
+    }
+
+    .vg-skill-tag {
+      display: inline-block;
+      background-color: #F1F5F9;
+      color: #1E293B;
+      font-size: 7.5pt;
+      font-weight: 600;
+      padding: 1.5px 6px;
+      border-radius: 4px;
+      margin-right: 3px;
+      margin-bottom: 3px;
+      border: 1px solid #E2E8F0;
+    }
+
+    .vg-edu-unit {
+      margin-bottom: 6px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .vg-edu-deg {
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: #0F172A;
+      line-height: 1.2;
+    }
+
+    .vg-edu-inst {
+      font-size: 7.8pt;
+      color: #64748B;
+    }
+
+    .vg-edu-dates {
+      font-size: 7.2pt;
+      color: {{ accent_color or '#0284C7' }};
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ACCENT BAR -->
+  <div class="top-accent-line"></div>
+
+  <!-- HEADER -->
+  <div class="header-layout">
+    <div class="vg-name">{{ resume.contact.name }}</div>
+    {% if resume.experience and resume.experience[0].position %}
+    <div class="vg-role">{{ resume.experience[0].position }}</div>
+    {% endif %}
+    <div class="vg-contact-bar">
+      {% set parts = [] %}
+      {% if resume.contact.email %}{% set _ = parts.append(resume.contact.email) %}{% endif %}
+      {% if resume.contact.phone %}{% set _ = parts.append(resume.contact.phone) %}{% endif %}
+      {% if resume.contact.location %}{% set _ = parts.append(resume.contact.location) %}{% endif %}
+      {% if resume.contact.linkedin %}{% set _ = parts.append(resume.contact.linkedin) %}{% endif %}
+      {% if resume.contact.github %}{% set _ = parts.append(resume.contact.github) %}{% endif %}
+      {{ parts | join('   •   ') }}
+    </div>
+  </div>
+
+  <!-- EXTRACTO -->
+  {% set final_summary = resume.summary_improved or resume.summary %}
+  {% if final_summary %}
+  <div class="vg-callout">
+    {{ final_summary }}
+  </div>
+  {% endif %}
+
+  <!-- GRID 2 COLUMNAS -->
+  <table class="vg-grid">
+    <tr>
+      <!-- COLUMNA PRINCIPAL EXPERIENCIA -->
+      <td class="vg-main-col">
+        {% if resume.experience %}
+        <div class="vg-sec-title">{{ labels.experience if labels else 'Experiencia Profesional' }}</div>
+        {% for exp in resume.experience %}
+        <div class="timeline-job">
+          <div class="job-title-row">{{ exp.position }}</div>
+          <div>
+            <span class="job-comp-row">{{ exp.company }}</span>
+            <span class="job-badge-date">
+              {{ exp.start_date or '' }} {% if exp.start_date and (exp.end_date or exp.current) %}–{% endif %} 
+              {{ (labels.present if labels else 'Presente') if exp.current else (exp.end_date or '') }}
+            </span>
+            {% if exp.location %}<span style="font-size: 7.8pt; color: #64748B;"> · {{ exp.location }}</span>{% endif %}
+          </div>
+          {% if exp.bullets %}
+          <ul class="vg-bullets">
+            {% for b in exp.bullets %}
+            <li>{{ b.improved or b.original }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+      </td>
+
+      <!-- SIDEBAR -->
+      <td class="vg-side-col">
+        <!-- HABILIDADES -->
+        {% if resume.skills %}
+        <div class="vg-side-box">
+          <div class="vg-side-heading">{{ labels.skills if labels else 'Stack y Competencias' }}</div>
+          {% for sc in resume.skills %}
+          <div style="font-size: 7.5pt; font-weight: 700; color: #64748B; margin-top: 5px; margin-bottom: 2px;">{{ sc.category }}</div>
+          <div>
+            {% for s in sc.skills %}
+            <span class="vg-skill-tag">{{ s }}</span>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- EDUCACIÓN -->
+        <div class="vg-side-box">
+          {% if resume.education %}
+          <div class="vg-side-heading">{{ labels.education if labels else 'Educación' }}</div>
+          {% for edu in resume.education %}
+          <div class="vg-edu-unit">
+            <div class="vg-edu-deg">{{ edu.degree }}</div>
+            {% if edu.field_of_study %}
+            <div style="font-size: 7.5pt; color: {{ accent_color or '#0284C7' }};">{{ edu.field_of_study }}</div>
+            {% endif %}
+            <div class="vg-edu-inst">{{ edu.institution }}</div>
+            <div class="vg-edu-dates">
+              {{ edu.start_date or '' }} {% if edu.start_date and edu.end_date %}–{% endif %} {{ edu.end_date or '' }}
+            </div>
+          </div>
+          {% endfor %}
+          {% endif %}
+        </div>
+
+        <!-- IDIOMAS Y CERTIFICACIONES -->
+        {% if resume.languages or resume.certifications %}
+        <div class="vg-side-box">
+          <div class="vg-side-heading">{{ (labels.languages ~ ' & ' ~ labels.certifications) if labels else 'Otros Datos' }}</div>
+          {% for lang in resume.languages %}
+          <div style="font-size: 7.8pt; margin-bottom: 2px;">
+            <strong>{{ lang.language }}</strong>{% if lang.proficiency %} ({{ lang.proficiency }}){% endif %}
+          </div>
+          {% endfor %}
+          {% for cert in resume.certifications %}
+          <div style="font-size: 7.8pt; margin-top: 3px;">
+            <strong>{{ cert.name }}</strong>{% if cert.issuer %} · {{ cert.issuer }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

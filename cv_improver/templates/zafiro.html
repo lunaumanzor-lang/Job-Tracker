@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ resume.contact.name }} - CV Zafiro Tech</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+    @page {
+      size: A4;
+      margin: 8mm 10mm 8mm 10mm;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #0F172A;
+      font-size: 8.8pt;
+      line-height: 1.45;
+      background-color: #FFFFFF;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* HERO BANNER TECH COMPACTO */
+    .hero-banner {
+      background-color: {{ accent_color or '#1E40AF' }};
+      color: #FFFFFF;
+      padding: 14px 18px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+
+    .hero-name {
+      font-size: 20pt;
+      font-weight: 800;
+      color: #FFFFFF;
+      letter-spacing: -0.3px;
+      line-height: 1.1;
+      margin-bottom: 3px;
+    }
+
+    .hero-role-badge {
+      display: inline-block;
+      background-color: rgba(255, 255, 255, 0.22);
+      color: #FFFFFF;
+      font-size: 8.2pt;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+    }
+
+    .hero-contacts {
+      font-size: 8.2pt;
+      color: #E2E8F0;
+      line-height: 1.35;
+    }
+
+    /* TARJETA DE RESUMEN PROFESIONAL */
+    .summary-card {
+      background-color: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-left: 3.5px solid {{ accent_color or '#1E40AF' }};
+      border-radius: 5px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 8.7pt;
+      line-height: 1.5;
+      text-align: justify;
+      color: #334155;
+    }
+
+    /* LAYOUT 2 COLUMNAS COMPATIBLE */
+    table.layout-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: none;
+    }
+
+    table.layout-table td {
+      vertical-align: top;
+      border: none;
+      padding: 0;
+    }
+
+    td.col-left {
+      width: 65%;
+      padding-right: 14px;
+    }
+
+    td.col-right {
+      width: 35%;
+      padding-left: 12px;
+      border-left: 1px solid #E2E8F0;
+    }
+
+    /* ENCABEZADOS DE SECCIÓN */
+    .section-title {
+      font-size: 9.8pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: {{ accent_color or '#1E40AF' }};
+      margin-top: 6px;
+      margin-bottom: 6px;
+      border-bottom: 2px solid {{ accent_color or '#1E40AF' }};
+      padding-bottom: 2px;
+    }
+
+    /* EXPERIENCIAS */
+    .job-entry {
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px dashed #E2E8F0;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .job-position {
+      font-size: 9.8pt;
+      font-weight: 800;
+      color: #0F172A;
+      line-height: 1.2;
+    }
+
+    .job-company {
+      font-size: 8.7pt;
+      font-weight: 700;
+      color: {{ accent_color or '#1E40AF' }};
+    }
+
+    .job-date-pill {
+      display: inline-block;
+      background-color: #EFF6FF;
+      color: {{ accent_color or '#1E40AF' }};
+      font-size: 7.5pt;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 4px;
+      border: 1px solid #DBEAFE;
+    }
+
+    ul.bullets {
+      margin-left: 16px;
+      margin-top: 4px;
+    }
+
+    ul.bullets li {
+      font-size: 8.5pt;
+      line-height: 1.48;
+      margin-bottom: 3px;
+      text-align: justify;
+      color: #334155;
+    }
+
+    /* TARJETAS BENTO LATERALES */
+    .bento-card {
+      background-color: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 9px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .bento-title {
+      font-size: 8.2pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #475569;
+      margin-bottom: 5px;
+      border-bottom: 1px solid #E2E8F0;
+      padding-bottom: 2px;
+    }
+
+    .skill-chip {
+      display: inline-block;
+      background-color: #FFFFFF;
+      border: 1px solid #CBD5E1;
+      color: #1E293B;
+      font-size: 7.5pt;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-right: 3px;
+      margin-bottom: 3px;
+    }
+
+    .edu-item {
+      margin-bottom: 6px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .edu-deg {
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: #0F172A;
+      line-height: 1.2;
+    }
+
+    .edu-inst {
+      font-size: 7.8pt;
+      color: #64748B;
+    }
+
+    .edu-date {
+      font-size: 7.2pt;
+      color: {{ accent_color or '#1E40AF' }};
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HERO BANNER -->
+  <div class="hero-banner">
+    <div class="hero-name">{{ resume.contact.name }}</div>
+    {% if resume.experience and resume.experience[0].position %}
+    <div class="hero-role-badge">{{ resume.experience[0].position }}</div>
+    {% endif %}
+    <div class="hero-contacts">
+      {% set parts = [] %}
+      {% if resume.contact.email %}{% set _ = parts.append(resume.contact.email) %}{% endif %}
+      {% if resume.contact.phone %}{% set _ = parts.append(resume.contact.phone) %}{% endif %}
+      {% if resume.contact.location %}{% set _ = parts.append(resume.contact.location) %}{% endif %}
+      {% if resume.contact.linkedin %}{% set _ = parts.append(resume.contact.linkedin) %}{% endif %}
+      {% if resume.contact.github %}{% set _ = parts.append(resume.contact.github) %}{% endif %}
+      {{ parts | join('   •   ') }}
+    </div>
+  </div>
+
+  <!-- RESUMEN PROFESIONAL -->
+  {% set final_summary = resume.summary_improved or resume.summary %}
+  {% if final_summary %}
+  <div class="summary-card">
+    {{ final_summary }}
+  </div>
+  {% endif %}
+
+  <!-- TABLA 2 COLUMNAS BENTO -->
+  <table class="layout-table">
+    <tr>
+      <!-- COLUMNA PRINCIPAL -->
+      <td class="col-left">
+        {% if resume.experience %}
+        <div class="section-title">{{ labels.experience if labels else 'Experiencia Laboral' }}</div>
+        {% for exp in resume.experience %}
+        <div class="job-entry">
+          <div class="job-position">{{ exp.position }}</div>
+          <div>
+            <span class="job-company">{{ exp.company }}</span>
+            <span class="job-date-pill">
+              {{ exp.start_date or '' }} {% if exp.start_date and (exp.end_date or exp.current) %}–{% endif %} 
+              {{ (labels.present if labels else 'Presente') if exp.current else (exp.end_date or '') }}
+            </span>
+            {% if exp.location %}<span style="font-size: 7.8pt; color: #64748B;"> · {{ exp.location }}</span>{% endif %}
+          </div>
+          {% if exp.bullets %}
+          <ul class="bullets">
+            {% for b in exp.bullets %}
+            <li>{{ b.improved or b.original }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+      </td>
+
+      <!-- COLUMNA LATERAL BENTO -->
+      <td class="col-right">
+        
+        <!-- HABILIDADES BENTO -->
+        {% if resume.skills %}
+        <div class="bento-card">
+          <div class="bento-title">{{ labels.skills if labels else 'Habilidades y Stack' }}</div>
+          {% for sc in resume.skills %}
+          <div style="font-size: 7.5pt; font-weight: 700; color: #64748B; margin-top: 5px; margin-bottom: 2px;">{{ sc.category }}</div>
+          <div>
+            {% for s in sc.skills %}
+            <span class="skill-chip">{{ s }}</span>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- EDUCACIÓN BENTO -->
+        {% if resume.education %}
+        <div class="bento-card">
+          <div class="bento-title">{{ labels.education if labels else 'Educación' }}</div>
+          {% for edu in resume.education %}
+          <div class="edu-item">
+            <div class="edu-deg">{{ edu.degree }}</div>
+            {% if edu.field_of_study %}
+            <div style="font-size: 7.5pt; color: {{ accent_color or '#1E40AF' }};">{{ edu.field_of_study }}</div>
+            {% endif %}
+            <div class="edu-inst">{{ edu.institution }}</div>
+            <div class="edu-date">
+              {{ edu.start_date or '' }} {% if edu.start_date and edu.end_date %}–{% endif %} {{ edu.end_date or '' }}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- IDIOMAS Y CERTIFICACIONES BENTO -->
+        {% if resume.languages or resume.certifications %}
+        <div class="bento-card">
+          <div class="bento-title">{{ (labels.certifications ~ ' & ' ~ labels.languages) if labels else 'Credenciales e Idiomas' }}</div>
+          {% for lang in resume.languages %}
+          <div style="font-size: 7.8pt; margin-bottom: 2px;">
+            <strong>{{ lang.language }}</strong>{% if lang.proficiency %} <span style="color: #64748B;">({{ lang.proficiency }})</span>{% endif %}
+          </div>
+          {% endfor %}
+          {% for cert in resume.certifications %}
+          <div style="font-size: 7.8pt; margin-top: 3px;">
+            <strong>{{ cert.name }}</strong>
+            {% if cert.issuer %}<div style="font-size: 7.2pt; color: #64748B;">{{ cert.issuer }}{% if cert.date %} · {{ cert.date }}{% endif %}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

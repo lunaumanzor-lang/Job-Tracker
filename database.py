@@ -200,6 +200,22 @@ def create_tables():
         );
         """)
 
+        # ----------------------------------------------------------------------
+        # TABLA: auth_sessions (Persistencia de sesión 4 horas)
+        # Permite mantener la sesión activa entre refrescos (F5) con validez de 4 horas
+        # ----------------------------------------------------------------------
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            user_email TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+        """)
+
         conn.commit()
 
     # Sembrar datos de ejemplo si la tabla de experiencia está vacía
@@ -1279,6 +1295,101 @@ def save_parsed_resume_data(
 
         conn.commit()
         return True
+
+
+
+# ------------------------------------------------------------------------------
+# GESTIÓN DE SESIONES PERSISTENTES (4 HORAS)
+# ------------------------------------------------------------------------------
+def save_auth_session(session_id: str, user_id: str, user_email: str, access_token: str, refresh_token: str, hours: int = 4) -> None:
+    """
+    Guarda o actualiza una sesión de usuario con expiración de 4 horas.
+    """
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    expires_at = now + timedelta(hours=hours)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO auth_sessions (
+                session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (
+            session_id,
+            user_id,
+            user_email,
+            access_token,
+            refresh_token,
+            now.isoformat(),
+            expires_at.isoformat()
+        ))
+        conn.commit()
+
+
+def get_auth_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene la sesión si existe y no ha expirado. Si expiró, la elimina automáticamente.
+    """
+    from datetime import datetime
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
+            FROM auth_sessions
+            WHERE session_id = ?;
+        """, (session_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        expires_at_str = row["expires_at"]
+        try:
+            exp_dt = datetime.fromisoformat(expires_at_str)
+            if datetime.now() > exp_dt:
+                cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
+                conn.commit()
+                return None
+        except Exception:
+            return None
+        return dict(row)
+
+
+def update_auth_session_tokens(session_id: str, access_token: str, refresh_token: str) -> None:
+    """
+    Actualiza los tokens de acceso y refresco de una sesión existente.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE auth_sessions
+            SET access_token = ?, refresh_token = ?
+            WHERE session_id = ?;
+        """, (access_token, refresh_token, session_id))
+        conn.commit()
+
+
+def delete_auth_session(session_id: str) -> None:
+    """
+    Elimina una sesión activa (por ejemplo, al hacer logout).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
+        conn.commit()
+
+
+def cleanup_expired_sessions() -> None:
+    """
+    Limpia todas las sesiones expiradas en la base de datos.
+    """
+    from datetime import datetime
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM auth_sessions
+            WHERE expires_at < ?;
+        """, (datetime.now().isoformat(),))
+        conn.commit()
 
 
 

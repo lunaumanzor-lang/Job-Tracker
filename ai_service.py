@@ -175,7 +175,38 @@ def normalize_resume_date(raw_date: Optional[str]) -> Optional[str]:
     return None
 
 
-def extract_skills_and_profile_from_resume(resume_text: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+def detect_resume_language(text: str) -> str:
+    """
+    Detecta automáticamente si el texto del currículum está predominantemente en inglés ('en') o español ('es').
+    """
+    if not text or not text.strip():
+        return "es"
+
+    text_lower = text.lower()
+    en_words = [
+        " the ", " and ", " of ", " to ", " in ", " with ", " for ", " at ", " from ", " on ",
+        "experience", "education", "skills", "summary", "present", "responsibilities",
+        "work experience", "professional experience", "developed", "managed", "designed",
+        "implemented", "engineer", "software", "university", "bachelor", "degree"
+    ]
+    es_words = [
+        " de ", " la ", " el ", " en ", " y ", " con ", " para ", " por ", " del ", " los ", " las ",
+        "experiencia", "educación", "educacion", "habilidades", "resumen", "presente", "actual",
+        "experiencia laboral", "experiencia profesional", "desarrollo", "desarrollé", "lideré",
+        "puesto", "empresa", "licenciatura", "título", "titulo", "ingeniería", "ingenieria"
+    ]
+
+    en_score = sum(text_lower.count(w) for w in en_words)
+    es_score = sum(text_lower.count(w) for w in es_words)
+
+    return "en" if en_score > es_score else "es"
+
+
+def extract_skills_and_profile_from_resume(
+    resume_text: str,
+    api_key: Optional[str] = None,
+    target_language: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Envía el texto del currículum al LLM en un único pase para extraer:
     1. Perfil del usuario (nombre, título, email, teléfono, resumen)
@@ -184,6 +215,8 @@ def extract_skills_and_profile_from_resume(resume_text: str, api_key: Optional[s
     4. Formación académica y certificaciones (institución, título, fechas raw)
     
     Técnicas aplicadas:
+    - Detección automática o explícita de idioma ('en' o 'es')
+    - Preservación estricta del idioma nativo del CV (sin traducción no deseada)
     - Zero-shot / Structured schema instruction
     - Lista blanca forzada de categorías estándar
     - Cascada de modelos (gemini-3.5-flash -> 3.6 -> 3.8 -> latest)
@@ -198,15 +231,100 @@ def extract_skills_and_profile_from_resume(resume_text: str, api_key: Optional[s
 
     genai.configure(api_key=key)
 
+    # Resolución de idioma: si no se especifica o es 'auto', detectar del texto
+    if not target_language or target_language.lower() == "auto":
+        resolved_lang = detect_resume_language(resume_text)
+    else:
+        resolved_lang = target_language.lower()
+
+    is_en = (resolved_lang == "en")
     categorias_permitidas_str = ", ".join(f'"{cat}"' for cat in SKILL_CATEGORIES)
 
-    prompt = f"""
+    if is_en:
+        prompt = f"""
+You are an executive technical recruiter and senior ATS resume parsing expert.
+Your mission is to analyze the following resume text and extract a comprehensive, structured profile strictly in ENGLISH:
+1. General candidate details (Full Name, current title, email, phone, location, and a concise 2-3 sentence professional summary).
+2. All technical skills, tools, frameworks, and methodologies identified.
+3. Complete employment history (company, job position/title, start and end dates as found, and accomplishment bullets).
+4. Academic background and certifications (institution, degree/credential, dates).
+
+CRITICAL LANGUAGE REQUIREMENT:
+The resume is written in English. ALL extracted fields (summary, job titles, bullet points, degrees, and skills) MUST BE STRICTLY PRESERVED AND OUTPUT IN PROFESSIONAL ENGLISH. NEVER TRANSLATE THEM TO SPANISH.
+
+ALLOWED CATEGORIES FOR EACH SKILL:
+You MUST categorize each skill into exactly one of these categories:
+[{categorias_permitidas_str}]
+
+ALLOWED PROFICIENCY LEVELS:
+- "Beginner": briefly mentioned or coursework.
+- "Intermediate": regular professional hands-on usage in projects.
+- "Advanced": 4+ years experience, leadership role, system architecture, or core expertise.
+If unsure, assign "Intermediate".
+
+DATE EXTRACTION RULES:
+- For start_date_raw and end_date_raw, copy the text exactly as written in the resume (e.g. "June 2021", "06/2021", "2018").
+- If the role is ongoing or current, write "Present" in end_date_raw.
+
+STRICT RESPONSE RULES:
+- Output ONLY a valid JSON object.
+- NO explanations, NO conversational text, NO markdown codeblocks like ```json ... ```.
+- Follow this exact schema:
+
+{{
+  "profile": {{
+    "full_name": "Full Name or null",
+    "current_title": "Current or most recent job title in English or null",
+    "email": "Email or null",
+    "phone": "Phone or null",
+    "location": "City, Country or null",
+    "summary": "Concise professional summary in English (2-3 sentences)"
+  }},
+  "skills": [
+    {{
+      "skill_name": "Technology/Tool name",
+      "category": "One of allowed categories above",
+      "proficiency": "Beginner, Intermediate or Advanced"
+    }}
+  ],
+  "experience": [
+    {{
+      "company": "Company Name",
+      "position": "Job Title in English",
+      "start_date_raw": "Start date as written",
+      "end_date_raw": "End date as written or 'Present'",
+      "bullets": [
+        "Concise achievement bullet in English 1",
+        "Concise achievement bullet in English 2"
+      ]
+    }}
+  ],
+  "education": [
+    {{
+      "institution": "University or Institution",
+      "credential": "Degree or Certification in English",
+      "start_date_raw": "Start date or empty",
+      "end_date_raw": "End date or empty"
+    }}
+  ]
+}}
+
+RESUME TEXT TO ANALYZE:
+\"\"\"
+{resume_text}
+\"\"\"
+"""
+    else:
+        prompt = f"""
 Eres un reclutador técnico senior y experto en análisis de perfiles de tecnología.
 Tu tarea es analizar el siguiente texto extraído de un currículum vitae (Resume/CV) y extraer de forma estructurada:
 1. Datos generales del profesional (Nombre completo, título actual, email, teléfono, ubicación y un breve resumen).
 2. Todas las tecnologías, herramientas, metodologías, certificaciones y habilidades blandas identificadas.
 3. Historial de experiencia laboral completa (empresa, cargo/puesto, fechas de inicio y fin, y viñetas/bullets de logros o responsabilidades).
 4. Formación académica, títulos, grados o certificaciones relevantes (institución, título, fechas).
+
+REGLA DE IDIOMA:
+Extrae y presenta el resumen profesional, cargos, viñetas de experiencia y títulos académicos en ESPAÑOL profesional.
 
 CATEGORÍAS PERMITIDAS PARA CADA HABILIDAD:
 Debes clasificar OBLIGATORIAMENTE cada habilidad en exactamente una de estas categorías:
@@ -364,8 +482,8 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
     exp_limpia = []
     for raw_exp in data.get("experience", []):
         if isinstance(raw_exp, dict) and (raw_exp.get("company") or raw_exp.get("position")):
-            comp = str(raw_exp.get("company") or "Empresa").strip()
-            pos = str(raw_exp.get("position") or "Puesto").strip()
+            comp = str(raw_exp.get("company") or ("Company" if is_en else "Empresa")).strip()
+            pos = str(raw_exp.get("position") or ("Role" if is_en else "Puesto")).strip()
             s_raw = str(raw_exp.get("start_date_raw") or "").strip()
             e_raw = str(raw_exp.get("end_date_raw") or "").strip()
 

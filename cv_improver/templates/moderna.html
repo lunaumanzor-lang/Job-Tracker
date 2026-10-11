@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ resume.contact.name }} - CV Neo-Ejecutivo</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #0F172A;
+      font-size: 8.8pt;
+      line-height: 1.45;
+      background-color: #FFFFFF;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* CONTENEDOR PRINCIPAL TABLA DE 2 COLUMNAS (COMPATIBLE WEASYPRINT Y XHTML2PDF) */
+    table.cv-wrapper {
+      width: 100%;
+      height: 100%;
+      border-collapse: collapse;
+      border: none;
+    }
+
+    table.cv-wrapper > tbody > tr > td {
+      vertical-align: top;
+      border: none;
+      padding: 0;
+    }
+
+    /* SIDEBAR OSCURA DE ALTO IMPACTO */
+    td.cv-sidebar {
+      width: 32%;
+      background-color: #0F172A;
+      color: #F8FAFC;
+      padding: 20px 16px 20px 18px;
+    }
+
+    /* MONOGRAMA / AVATAR CIRCULAR */
+    .avatar-monogram {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background-color: {{ accent_color or '#3B82F6' }};
+      color: #FFFFFF;
+      font-size: 15pt;
+      font-weight: 800;
+      text-align: center;
+      line-height: 44px;
+      margin-bottom: 10px;
+      letter-spacing: 1px;
+    }
+
+    .sidebar-name {
+      font-size: 15pt;
+      font-weight: 800;
+      color: #FFFFFF;
+      line-height: 1.15;
+      margin-bottom: 3px;
+      letter-spacing: -0.3px;
+    }
+
+    .sidebar-role {
+      font-size: 8.2pt;
+      font-weight: 600;
+      color: {{ accent_color or '#60A5FA' }};
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 14px;
+    }
+
+    .sidebar-divider {
+      height: 1px;
+      background-color: #334155;
+      margin: 10px 0;
+    }
+
+    .sidebar-section-title {
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #94A3B8;
+      margin-bottom: 6px;
+    }
+
+    /* ITEMS DE CONTACTO */
+    .contact-row {
+      margin-bottom: 5px;
+      font-size: 7.8pt;
+      color: #CBD5E1;
+      word-break: break-all;
+    }
+
+    .contact-label {
+      font-size: 7pt;
+      font-weight: 600;
+      color: #64748B;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      display: block;
+    }
+
+    .contact-val {
+      color: #E2E8F0;
+      font-size: 8pt;
+    }
+
+    /* HABILIDADES EN PÍLDORAS */
+    .skill-cat-title {
+      font-size: 7.5pt;
+      font-weight: 700;
+      color: #94A3B8;
+      margin-top: 6px;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+    }
+
+    .skill-pill {
+      display: inline-block;
+      background-color: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #F1F5F9;
+      font-size: 7.5pt;
+      font-weight: 500;
+      padding: 1.5px 6px;
+      border-radius: 4px;
+      margin-right: 2px;
+      margin-bottom: 3px;
+    }
+
+    /* EDUCACIÓN EN SIDEBAR */
+    .sidebar-edu-item {
+      margin-bottom: 7px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .sidebar-edu-deg {
+      font-size: 8.2pt;
+      font-weight: 700;
+      color: #FFFFFF;
+      line-height: 1.2;
+    }
+
+    .sidebar-edu-inst {
+      font-size: 7.6pt;
+      color: #94A3B8;
+      margin-top: 1px;
+    }
+
+    .sidebar-edu-date {
+      font-size: 7.2pt;
+      color: {{ accent_color or '#60A5FA' }};
+      font-weight: 600;
+      margin-top: 1px;
+    }
+
+    /* COLUMNA PRINCIPAL DERECHA */
+    td.cv-main {
+      width: 68%;
+      background-color: #FFFFFF;
+      padding: 20px 18px 20px 18px;
+    }
+
+    .main-section-title {
+      font-size: 9.8pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: #0F172A;
+      margin-top: 8px;
+      margin-bottom: 8px;
+      padding-bottom: 3px;
+      border-bottom: 2px solid {{ accent_color or '#3B82F6' }};
+    }
+
+    /* PERFIL PROFESIONAL */
+    .summary-quote {
+      background-color: #F8FAFC;
+      border-left: 3.5px solid {{ accent_color or '#3B82F6' }};
+      border-radius: 0 5px 5px 0;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 8.6pt;
+      line-height: 1.5;
+      color: #334155;
+      text-align: justify;
+    }
+
+    /* EXPERIENCIA LABORAL TIMELINE */
+    .job-timeline-item {
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #F1F5F9;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .job-header-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 3px;
+    }
+
+    .job-header-table td {
+      vertical-align: middle;
+      border: none;
+      padding: 0;
+    }
+
+    .job-position-name {
+      font-size: 9.8pt;
+      font-weight: 800;
+      color: #0F172A;
+      line-height: 1.2;
+    }
+
+    .job-company-name {
+      font-size: 8.7pt;
+      font-weight: 700;
+      color: {{ accent_color or '#3B82F6' }};
+    }
+
+    .job-date-badge {
+      display: inline-block;
+      background-color: #F1F5F9;
+      color: #475569;
+      font-size: 7.5pt;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid #E2E8F0;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    ul.job-bullets {
+      margin-left: 16px;
+      margin-top: 4px;
+    }
+
+    ul.job-bullets li {
+      font-size: 8.5pt;
+      line-height: 1.48;
+      color: #334155;
+      margin-bottom: 3px;
+      text-align: justify;
+    }
+  </style>
+</head>
+<body>
+
+  <table class="cv-wrapper">
+    <tr>
+      <!-- SIDEBAR LATERAL OSCURA -->
+      <td class="cv-sidebar">
+        
+        <!-- INICIALES / MONOGRAMA -->
+        {% set name_parts = resume.contact.name.split() %}
+        {% set initials = (name_parts[0][0] if name_parts|length > 0 else 'C') ~ (name_parts[1][0] if name_parts|length > 1 else '') %}
+        <div class="avatar-monogram">{{ initials | upper }}</div>
+
+        <div class="sidebar-name">{{ resume.contact.name }}</div>
+        {% if resume.experience and resume.experience[0].position %}
+        <div class="sidebar-role">{{ resume.experience[0].position }}</div>
+        {% endif %}
+
+        <div class="sidebar-divider"></div>
+
+        <!-- CONTACTO -->
+        <div class="sidebar-section-title">{{ 'Contact' if lang == 'en' else 'Contacto' }}</div>
+        {% if resume.contact.email %}
+        <div class="contact-row">
+          <span class="contact-label">Email</span>
+          <span class="contact-val">{{ resume.contact.email }}</span>
+        </div>
+        {% endif %}
+
+        {% if resume.contact.phone %}
+        <div class="contact-row">
+          <span class="contact-label">{{ 'Phone' if lang == 'en' else 'Teléfono' }}</span>
+          <span class="contact-val">{{ resume.contact.phone }}</span>
+        </div>
+        {% endif %}
+
+        {% if resume.contact.location %}
+        <div class="contact-row">
+          <span class="contact-label">{{ 'Location' if lang == 'en' else 'Ubicación' }}</span>
+          <span class="contact-val">{{ resume.contact.location }}</span>
+        </div>
+        {% endif %}
+
+        {% if resume.contact.linkedin %}
+        <div class="contact-row">
+          <span class="contact-label">LinkedIn</span>
+          <span class="contact-val">{{ resume.contact.linkedin }}</span>
+        </div>
+        {% endif %}
+
+        {% if resume.contact.github %}
+        <div class="contact-row">
+          <span class="contact-label">GitHub</span>
+          <span class="contact-val">{{ resume.contact.github }}</span>
+        </div>
+        {% endif %}
+
+        <!-- HABILIDADES -->
+        {% if resume.skills %}
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-title">{{ labels.skills if labels else 'Competencias' }}</div>
+        {% for sc in resume.skills %}
+        <div class="skill-cat-title">{{ sc.category }}</div>
+        <div>
+          {% for s in sc.skills %}
+          <span class="skill-pill">{{ s }}</span>
+          {% endfor %}
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <!-- EDUCACIÓN EN SIDEBAR -->
+        {% if resume.education %}
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-title">{{ labels.education if labels else 'Educación' }}</div>
+        {% for edu in resume.education %}
+        <div class="sidebar-edu-item">
+          <div class="sidebar-edu-deg">{{ edu.degree }}</div>
+          {% if edu.field_of_study %}
+          <div style="font-size: 7.5pt; color: #CBD5E1;">{{ edu.field_of_study }}</div>
+          {% endif %}
+          <div class="sidebar-edu-inst">{{ edu.institution }}</div>
+          <div class="sidebar-edu-date">
+            {{ edu.start_date or '' }} {% if edu.start_date and edu.end_date %}–{% endif %} {{ edu.end_date or '' }}
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <!-- IDIOMAS -->
+        {% if resume.languages %}
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-title">{{ labels.languages if labels else 'Idiomas' }}</div>
+        {% for lang_item in resume.languages %}
+        <div style="font-size: 7.8pt; margin-bottom: 2px; color: #E2E8F0;">
+          <strong>{{ lang_item.language }}</strong>
+          {% if lang_item.proficiency %}<span style="color: #94A3B8;"> · {{ lang_item.proficiency }}</span>{% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+
+      </td>
+
+      <!-- COLUMNA PRINCIPAL BLANCA -->
+      <td class="cv-main">
+
+        <!-- RESUMEN PROFESIONAL -->
+        {% set final_summary = resume.summary_improved or resume.summary %}
+        {% if final_summary %}
+        <div class="main-section-title">{{ labels.profile if labels else 'Perfil Ejecutivo' }}</div>
+        <div class="summary-quote">
+          {{ final_summary }}
+        </div>
+        {% endif %}
+
+        <!-- EXPERIENCIA LABORAL -->
+        {% if resume.experience %}
+        <div class="main-section-title">{{ labels.experience if labels else 'Experiencia Laboral' }}</div>
+        {% for exp in resume.experience %}
+        <div class="job-timeline-item">
+          <table class="job-header-table">
+            <tr>
+              <td>
+                <div class="job-position-name">{{ exp.position }}</div>
+                <div>
+                  <span class="job-company-name">{{ exp.company }}</span>
+                  {% if exp.location %}<span style="font-size: 7.8pt; color: #64748B;"> · {{ exp.location }}</span>{% endif %}
+                </div>
+              </td>
+              <td style="text-align: right; width: 35%;">
+                <span class="job-date-badge">
+                  {{ exp.start_date or '' }} {% if exp.start_date and (exp.end_date or exp.current) %}–{% endif %} 
+                  {{ (labels.present if labels else 'Presente') if exp.current else (exp.end_date or '') }}
+                </span>
+              </td>
+            </tr>
+          </table>
+
+          {% if exp.bullets %}
+          <ul class="job-bullets">
+            {% for b in exp.bullets %}
+            <li>{{ b.improved or b.original }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <!-- CERTIFICACIONES (SI EXISTEN) -->
+        {% if resume.certifications %}
+        <div class="main-section-title">{{ labels.certifications if labels else 'Certificaciones' }}</div>
+        {% for cert in resume.certifications %}
+        <div style="margin-bottom: 5px; page-break-inside: avoid; break-inside: avoid;">
+          <strong style="color: #0F172A; font-size: 8.5pt;">{{ cert.name }}</strong>
+          {% if cert.issuer %}<div style="color: #64748B; font-size: 7.8pt;">{{ cert.issuer }}{% if cert.date %} · {{ cert.date }}{% endif %}</div>{% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
