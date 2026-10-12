@@ -150,10 +150,13 @@ elif "lang" not in st.session_state:
 # ------------------------------------------------------------------------------
 # SUPABASE AUTHENTICATION & ACCESS CONTROL (Gated Content)
 # ------------------------------------------------------------------------------
-# 1. Conectar a Supabase usando los secretos guardados en .streamlit/secrets.toml
+# 1. Conectar a Supabase por sesión usando los secretos guardados en .streamlit/secrets.toml
 url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
+
+if "supabase_client" not in st.session_state:
+    st.session_state.supabase_client = create_client(url, key)
+supabase: Client = st.session_state.supabase_client
 
 # Limpiar automáticamente sesiones expiradas en SQLite
 cleanup_expired_sessions()
@@ -174,6 +177,16 @@ def establish_authenticated_session(user, session, email_fallback: str = "", hou
         st.session_state.refresh_token = session.refresh_token
         try:
             supabase.postgrest.auth(session.access_token)
+        except Exception:
+            pass
+
+        # Sincronizar preferencia de idioma desde Supabase para el usuario activo
+        try:
+            u_pref = get_user_preferred_language(user_id=str(user.id), client=supabase)
+            if u_pref in ("es", "en"):
+                st.session_state["lang"] = u_pref
+                exp_radio = "🇪🇸 Español (ES)" if u_pref == "es" else "🇺🇸 English (EN)"
+                st.session_state["sidebar_lang_selector"] = exp_radio
         except Exception:
             pass
 
@@ -218,6 +231,15 @@ if persisted_sid and st.session_state.user is None:
                         supabase.postgrest.auth(auth_res.session.access_token)
                     except Exception:
                         pass
+                # Sincronizar preferencia de idioma desde Supabase tras auto-login
+                try:
+                    u_pref = get_user_preferred_language(user_id=str(auth_res.user.id), client=supabase)
+                    if u_pref in ("es", "en"):
+                        st.session_state["lang"] = u_pref
+                        exp_radio = "🇪🇸 Español (ES)" if u_pref == "es" else "🇺🇸 English (EN)"
+                        st.session_state["sidebar_lang_selector"] = exp_radio
+                except Exception:
+                    pass
                 st.session_state.pop("session_expired_notice", None)
             else:
                 delete_auth_session(persisted_sid)
@@ -554,6 +576,7 @@ with col_usr3:
         st.session_state.user = None
         st.session_state.access_token = None
         st.session_state.refresh_token = None
+        st.session_state.pop("supabase_client", None)
         st.session_state.is_resetting_password = False
         st.session_state.pop("main_nav_radio", None)
         st.session_state.pop("nav_initialized", None)

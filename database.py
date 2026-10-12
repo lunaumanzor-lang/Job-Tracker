@@ -696,82 +696,198 @@ def get_monthly_interviews() -> List[Dict[str, Any]]:
 
 
 # ------------------------------------------------------------------------------
-# 8. OPERACIONES CRUD: USER PROFILE & USER SKILLS (Fase 5.1: My Profile)
+# 8. OPERACIONES CRUD: USER PROFILE (Fase 5.1 & Migración Supabase)
 # ------------------------------------------------------------------------------
+def get_supabase_client():
+    """
+    Obtiene o inicializa el cliente de Supabase guardado en st.session_state
+    para la sesión del usuario actual, asegurando que no sea un cliente global compartido.
+    """
+    try:
+        import streamlit as st
+        from supabase import create_client
+        if "supabase_client" not in st.session_state:
+            url = st.secrets["SUPABASE_URL"]
+            key = st.secrets["SUPABASE_KEY"]
+            st.session_state.supabase_client = create_client(url, key)
+        client = st.session_state.supabase_client
+        if "access_token" in st.session_state and st.session_state.access_token:
+            try:
+                client.postgrest.auth(st.session_state.access_token)
+            except Exception:
+                pass
+        return client
+    except Exception:
+        return None
+
+
+def get_current_user_id() -> Optional[str]:
+    """
+    Obtiene el user_id del usuario autenticado en la sesión actual de Streamlit.
+    """
+    try:
+        import streamlit as st
+        user = getattr(st.session_state, "user", None)
+        if user:
+            u_id = getattr(user, "id", None)
+            if not u_id and isinstance(user, dict):
+                u_id = user.get("id")
+            if u_id:
+                return str(u_id)
+    except Exception:
+        pass
+    return None
+
+
 def save_user_profile(
     full_name: Optional[str] = None,
     current_title: Optional[str] = None,
     email: Optional[str] = None,
     phone: Optional[str] = None,
     location: Optional[str] = None,
-    summary: Optional[str] = None
+    summary: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Any = None
 ) -> bool:
     """
-    Inserta o actualiza el perfil único del usuario (id=1) usando UPSERT.
+    Inserta o actualiza el perfil del usuario autenticado en Supabase.
+    Aplica filtro explícito por user_id además de RLS.
     """
-    query = """
-    INSERT INTO user_profile (id, full_name, current_title, email, phone, location, summary, updated_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-    ON CONFLICT(id) DO UPDATE SET
-        full_name = excluded.full_name,
-        current_title = excluded.current_title,
-        email = excluded.email,
-        phone = excluded.phone,
-        location = excluded.location,
-        summary = excluded.summary,
-        updated_at = datetime('now', 'localtime');
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (full_name, current_title, email, phone, location, summary))
-        conn.commit()
-        return True
+    from datetime import datetime, timezone
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "user_id": uid,
+        "full_name": full_name,
+        "current_title": current_title,
+        "email": email,
+        "phone": phone,
+        "location": location,
+        "summary": summary,
+        "updated_at": now_iso
+    }
+    try:
+        existing = (
+            sb.table("user_profile")
+            .select("id")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if existing and existing.data:
+            response = (
+                sb.table("user_profile")
+                .update(payload)
+                .eq("user_id", uid)
+                .execute()
+            )
+        else:
+            response = (
+                sb.table("user_profile")
+                .insert(payload)
+                .execute()
+            )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def get_user_profile() -> Optional[Dict[str, Any]]:
+def get_user_profile(user_id: Optional[str] = None, client: Any = None) -> Optional[Dict[str, Any]]:
     """
-    Obtiene la información del perfil del usuario (id=1).
+    Obtiene la información del perfil del usuario autenticado desde Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
-    query = "SELECT * FROM user_profile WHERE id = 1;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def get_user_preferred_language() -> Optional[str]:
-    """
-    Fase 6.1 (i18n): Obtiene la preferencia de idioma guardada del usuario ('es', 'en' o None).
-    """
-    query = "SELECT preferred_language FROM user_profile WHERE id = 1;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        row = cursor.fetchone()
-        if row and row["preferred_language"]:
-            return str(row["preferred_language"]).strip().lower()
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return None
+    sb = client or get_supabase_client()
+    if not sb:
+        return None
+    try:
+        response = (
+            sb.table("user_profile")
+            .select("*")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if response and response.data:
+            return dict(response.data)
+        return None
+    except Exception:
         return None
 
 
-def set_user_preferred_language(lang: str) -> bool:
+def get_user_preferred_language(user_id: Optional[str] = None, client: Any = None) -> Optional[str]:
     """
-    Fase 6.1 (i18n): Guarda o actualiza la preferencia de idioma del usuario ('es' o 'en') en user_profile.
-    Si la fila id=1 no existe aún, la crea con este valor inicial.
+    Obtiene la preferencia de idioma guardada ('es' o 'en') del usuario autenticado en Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
+    """
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return None
+    sb = client or get_supabase_client()
+    if not sb:
+        return None
+    try:
+        response = (
+            sb.table("user_profile")
+            .select("preferred_language")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if response and response.data and response.data.get("preferred_language"):
+            return str(response.data["preferred_language"]).strip().lower()
+        return None
+    except Exception:
+        return None
+
+
+def set_user_preferred_language(lang: str, user_id: Optional[str] = None, client: Any = None) -> bool:
+    """
+    Guarda o actualiza la preferencia de idioma ('es' o 'en') del usuario autenticado en Supabase.
+    Aplica filtro explícito por user_id además de RLS.
     """
     lang_clean = lang.strip().lower() if lang else "es"
-    query = """
-    INSERT INTO user_profile (id, preferred_language, updated_at)
-    VALUES (1, ?, datetime('now', 'localtime'))
-    ON CONFLICT(id) DO UPDATE SET
-        preferred_language = excluded.preferred_language,
-        updated_at = datetime('now', 'localtime');
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (lang_clean,))
-        conn.commit()
-        return True
+    from datetime import datetime, timezone
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        existing = (
+            sb.table("user_profile")
+            .select("id")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if existing and existing.data:
+            response = (
+                sb.table("user_profile")
+                .update({"preferred_language": lang_clean, "updated_at": now_iso})
+                .eq("user_id", uid)
+                .execute()
+            )
+        else:
+            response = (
+                sb.table("user_profile")
+                .insert({"user_id": uid, "preferred_language": lang_clean, "updated_at": now_iso})
+                .execute()
+            )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
 def add_user_skill(
