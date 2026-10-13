@@ -246,3 +246,27 @@ CREATE POLICY "cv_improver_drafts_user_policy" ON public.cv_improver_drafts
     USING (user_id = (SELECT auth.uid()))
     WITH CHECK (user_id = (SELECT auth.uid()));
 
+-- ==============================================================================
+-- 10. auth_sessions (Persistencia de Sesión Segura en Servidor)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.auth_sessions (
+    session_id_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    user_email TEXT,
+    encrypted_refresh_token TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- Habilitar RLS obligatorio
+ALTER TABLE public.auth_sessions ENABLE ROW LEVEL SECURITY;
+
+-- NOTA DE SEGURIDAD CRÍTICA:
+-- Esta tabla NO tiene políticas para 'anon' ni 'authenticated'.
+-- Todo acceso desde PostgREST público está bloqueado por defecto.
+-- El acceso es exclusivo desde el servidor mediante la clave service_role.
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at 
+    ON public.auth_sessions (expires_at);
+
+

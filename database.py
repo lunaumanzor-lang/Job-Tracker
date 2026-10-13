@@ -5,36 +5,27 @@
 
 import os
 import re
+import hashlib
 import sqlite3
-from datetime import date
+from datetime import datetime, timezone, timedelta, date
 from typing import List, Dict, Optional, Any
 import pandas as pd
+from cryptography.fernet import Fernet
 from supabase import Client
 
 # Directorio base del proyecto (donde reside este archivo .py)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Ruta absoluta de la base de datos local
+# Ruta absoluta de la base de datos local (mantenida temporalmente para scripts antiguos)
 DB_NAME = os.path.join(BASE_DIR, "job_tracker.db")
 
 
 
 # ------------------------------------------------------------------------------
-# CONEXIÓN Y CONFIGURACIÓN
+# CONEXIÓN Y CONFIGURACIÓN (SQLite Legacy)
 # ------------------------------------------------------------------------------
 def get_connection():
     """
-    Crea y retorna una conexión a la base de datos SQLite.
-    
-    CONCEPTO - row_factory:
-    Por defecto, sqlite3 devuelve cada fila como una tupla: (1, 'Google', ...).
-    Al activar sqlite3.Row, podemos acceder a las columnas tanto por índice
-    como por su NOMBRE exacto: fila['company'], lo cual hace el código mucho
-    más legible y reduce errores.
-    
-    CONCEPTO - PRAGMA foreign_keys = ON:
-    Por compatibilidad histórica, SQLite viene con el soporte de llaves foráneas
-    desactivado por defecto. Es una buena práctica activarlo en cada conexión
-    para garantizar la integridad referencial de los datos.
+    Crea y retorna una conexión a la base de datos SQLite (compatibilidad con scripts legacy).
     """
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
@@ -43,183 +34,9 @@ def get_connection():
 
 
 # ------------------------------------------------------------------------------
-# 1. CREACIÓN DEL SCHEMA (Tablas Relacionales)
+# 1. ESQUEMA DE BASE DE DATOS MIGRADO A SUPABASE
 # ------------------------------------------------------------------------------
-def create_tables():
-    """
-    Crea las 4 tablas principales del sistema si no existen:
-    1. applications  -> Registro principal de cada postulación
-    2. interviews    -> Entrevistas vinculadas a una postulación (1 a N)
-    3. skills        -> Habilidades requeridas por el puesto de trabajo (1 a N)
-    4. user_skills   -> Habilidades reales del candidato (mi perfil)
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        # ----------------------------------------------------------------------
-        # TABLA 1: applications
-        # Representa la entidad raíz. Cada fila es una postulación individual.
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company TEXT NOT NULL,
-            position TEXT NOT NULL,
-            application_date TEXT,
-            status TEXT NOT NULL DEFAULT 'Applied',
-            salary TEXT,
-            work_mode TEXT,
-            location TEXT,
-            job_url TEXT,
-            recruiter TEXT,
-            notes TEXT,
-            follow_up_date TEXT
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 2: interviews
-        # Relación 1 a N: Una postulación puede tener múltiples etapas de entrevista
-        # (ej. HR Screen, Technical Interview, Hiring Manager).
-        # FOREIGN KEY asegura que application_id pertenezca a una aplicación real.
-        # ON DELETE CASCADE: Si se borra la postulación, se borran sus entrevistas.
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS interviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            application_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            interview_type TEXT NOT NULL,
-            notes TEXT,
-            result TEXT DEFAULT 'Pending',
-            FOREIGN KEY (application_id) REFERENCES applications (id) ON DELETE CASCADE
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 3: skills (Skills de la oferta laboral)
-        # Relación 1 a N: Una vacante pide múltiples skills técnicas o blandas.
-        # match_status: 'Match', 'Missing' o 'Learning' (lo usaremos con la IA en Fase 5).
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            application_id INTEGER NOT NULL,
-            skill TEXT NOT NULL,
-            match_status TEXT DEFAULT 'Pending',
-            FOREIGN KEY (application_id) REFERENCES applications (id) ON DELETE CASCADE
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 4: user_profile (Perfil del Usuario / Master Profile)
-        # Guarda información general del usuario (un solo registro, id=1).
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_profile (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            full_name TEXT,
-            current_title TEXT,
-            email TEXT,
-            phone TEXT,
-            location TEXT,
-            summary TEXT,
-            preferred_language TEXT DEFAULT NULL,
-            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-        );
-        """)
-
-        # Migración Fase 6.1: asegurar que user_profile tenga la columna preferred_language
-        cursor.execute("PRAGMA table_info(user_profile);")
-        profile_cols = [col[1] for col in cursor.fetchall()]
-        if profile_cols and "preferred_language" not in profile_cols:
-            cursor.execute("ALTER TABLE user_profile ADD COLUMN preferred_language TEXT DEFAULT NULL;")
-
-        # ----------------------------------------------------------------------
-        # TABLA 5: user_skills (Mi inventario maestro de habilidades)
-        # Guarda las tecnologías y habilidades que domino, su procedencia y nivel.
-        # ----------------------------------------------------------------------
-        cursor.execute("PRAGMA table_info(user_skills);")
-        cols = [col[1] for col in cursor.fetchall()]
-        if cols and "skill_name" not in cols:
-            cursor.execute("DROP TABLE user_skills;")
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            skill_name TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            source TEXT DEFAULT 'Manual',
-            proficiency TEXT DEFAULT 'Intermediate',
-            date_added TEXT DEFAULT (date('now'))
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # FASE 5.7: REINICIO LIMPIO DE RESUME_BULLETS Y NUEVAS TABLAS
-        # 1. experience_entries: experiencia laboral estructurada (fechas normalizadas)
-        # 2. resume_bullets: bullets con foreign key experience_id
-        # 3. education_entries: historial educativo y certificaciones
-        # ----------------------------------------------------------------------
-        cursor.execute("PRAGMA table_info(resume_bullets);")
-        cols_b = [col[1] for col in cursor.fetchall()]
-        if cols_b and "section" in cols_b:
-            cursor.execute("DROP TABLE IF EXISTS resume_bullets;")
-            cursor.execute("DROP TABLE IF EXISTS experience_entries;")
-            cursor.execute("DROP TABLE IF EXISTS education_entries;")
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS experience_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company TEXT NOT NULL,
-            position TEXT NOT NULL,
-            start_date TEXT,
-            end_date TEXT,
-            is_current INTEGER DEFAULT 0,
-            order_index INTEGER DEFAULT 0
-        );
-        """)
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS resume_bullets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            experience_id INTEGER NOT NULL,
-            bullet_text TEXT NOT NULL,
-            original_text TEXT NOT NULL,
-            current_text TEXT NOT NULL,
-            order_index INTEGER DEFAULT 0,
-            FOREIGN KEY (experience_id) REFERENCES experience_entries (id) ON DELETE CASCADE
-        );
-        """)
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS education_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            institution TEXT NOT NULL,
-            credential TEXT NOT NULL,
-            start_date TEXT,
-            end_date TEXT,
-            order_index INTEGER DEFAULT 0
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA: auth_sessions (Persistencia de sesión 4 horas)
-        # Permite mantener la sesión activa entre refrescos (F5) con validez de 4 horas
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-            session_id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            user_email TEXT NOT NULL,
-            access_token TEXT NOT NULL,
-            refresh_token TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        );
-        """)
-
-    conn.commit()
+# Las tablas residen en Supabase (PostgreSQL). Ver supabase_schema.sql.
 
 
 # ------------------------------------------------------------------------------
@@ -1994,105 +1811,225 @@ def delete_cv_improver_draft(
 
 
 # ------------------------------------------------------------------------------
-# GESTIÓN DE SESIONES PERSISTENTES (4 HORAS)
+# GESTIÓN DE SESIONES PERSISTENTES SEGURA (auth_sessions en Supabase vía service_role)
 # ------------------------------------------------------------------------------
-def save_auth_session(session_id: str, user_id: str, user_email: str, access_token: str, refresh_token: str, hours: int = 4) -> None:
+def _get_service_role_client() -> Optional[Client]:
     """
-    Guarda o actualiza una sesión de usuario con expiración de 4 horas.
+    Crea un cliente de Supabase usando SUPABASE_SERVICE_ROLE_KEY exclusivamente
+    para la gestión de la tabla auth_sessions en el servidor.
+    NUNCA se guarda en st.session_state ni se usa para sign_in ni operaciones de usuario.
     """
-    from datetime import datetime, timedelta
-    now = datetime.now()
-    expires_at = now + timedelta(hours=hours)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO auth_sessions (
-                session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (
-            session_id,
-            user_id,
-            user_email,
-            access_token,
-            refresh_token,
-            now.isoformat(),
-            expires_at.isoformat()
-        ))
-        conn.commit()
+    try:
+        import streamlit as st
+        from supabase import create_client
+        url = st.secrets.get("SUPABASE_URL")
+        service_key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not url or not service_key:
+            return None
+        return create_client(url, service_key)
+    except Exception as e:
+        print(f"Error al inicializar cliente service_role de Supabase: {e}")
+        return None
+
+
+def _hash_session_id(session_id: str) -> str:
+    """
+    Calcula el hash SHA-256 del session_id.
+    El session_id en texto claro jamás se almacena en la base de datos.
+    """
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+
+
+def _get_fernet_cipher() -> Optional[Fernet]:
+    """
+    Obtiene la instancia de cifrado Fernet usando SESSION_ENCRYPTION_KEY de secrets.
+    """
+    try:
+        import streamlit as st
+        enc_key = st.secrets.get("SESSION_ENCRYPTION_KEY")
+        if not enc_key:
+            return None
+        return Fernet(enc_key.encode("utf-8") if isinstance(enc_key, str) else enc_key)
+    except Exception as e:
+        print(f"Error al inicializar cifrador Fernet: {e}")
+        return None
+
+
+def _encrypt_refresh_token(refresh_token: str) -> Optional[str]:
+    """
+    Cifra simétricamente el refresh_token con Fernet.
+    """
+    cipher = _get_fernet_cipher()
+    if not cipher or not refresh_token:
+        return None
+    try:
+        return cipher.encrypt(refresh_token.encode("utf-8")).decode("utf-8")
+    except Exception as e:
+        print(f"Error al cifrar refresh token: {e}")
+        return None
+
+
+def _decrypt_refresh_token(encrypted_token: str) -> Optional[str]:
+    """
+    Descifra el refresh_token con Fernet.
+    """
+    cipher = _get_fernet_cipher()
+    if not cipher or not encrypted_token:
+        return None
+    try:
+        return cipher.decrypt(encrypted_token.encode("utf-8")).decode("utf-8")
+    except Exception as e:
+        print(f"Error al descifrar refresh token: {e}")
+        return None
+
+
+def save_auth_session(
+    session_id: str,
+    user_id: str,
+    user_email: str,
+    refresh_token: str,
+    access_token: Optional[str] = None,
+    hours: int = 4
+) -> bool:
+    """
+    Guarda la sesión persistente en Supabase (auth_sessions) usando service_role.
+    - session_id se almacena como hash SHA-256.
+    - refresh_token se almacena cifrado con Fernet.
+    - No se guarda el access_token en la base de datos.
+    """
+    client = _get_service_role_client()
+    if not client:
+        return False
+
+    enc_rt = _encrypt_refresh_token(refresh_token)
+    if not enc_rt:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+    try:
+        client.table("auth_sessions").upsert({
+            "session_id_hash": sid_hash,
+            "user_id": str(user_id),
+            "user_email": str(user_email),
+            "encrypted_refresh_token": enc_rt,
+            "expires_at": expires_at.isoformat()
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"Error en save_auth_session (service_role): {e}")
+        return False
 
 
 def get_auth_session(session_id: str) -> Optional[Dict[str, Any]]:
     """
-    Obtiene la sesión si existe y no ha expirado. Si expiró, la elimina automáticamente.
+    Recupera una sesión activa por el session_id usando service_role.
+    Valida la expiración de 4 horas y descifra el refresh_token con Fernet.
     """
-    from datetime import datetime
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
-            FROM auth_sessions
-            WHERE session_id = ?;
-        """, (session_id,))
-        row = cursor.fetchone()
-        if not row:
+    client = _get_service_role_client()
+    if not client:
+        return None
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        res = (
+            client.table("auth_sessions")
+            .select("*")
+            .eq("session_id_hash", sid_hash)
+            .limit(1)
+            .execute()
+        )
+        if not res.data or len(res.data) == 0:
             return None
-        expires_at_str = row["expires_at"]
-        try:
-            exp_dt = datetime.fromisoformat(expires_at_str)
-            if datetime.now() > exp_dt:
-                cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
-                conn.commit()
+
+        record = res.data[0]
+        exp_str = record.get("expires_at")
+        if exp_str:
+            exp_dt = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) >= exp_dt:
+                delete_auth_session(session_id)
                 return None
-        except Exception:
+
+        raw_rt = _decrypt_refresh_token(record.get("encrypted_refresh_token", ""))
+        if not raw_rt:
             return None
-        return dict(row)
+
+        return {
+            "session_id": session_id,
+            "user_id": record.get("user_id"),
+            "user_email": record.get("user_email"),
+            "refresh_token": raw_rt,
+            "expires_at": exp_str
+        }
+    except Exception as e:
+        print(f"Error en get_auth_session (service_role): {e}")
+        return None
 
 
-def update_auth_session_tokens(session_id: str, access_token: str, refresh_token: str) -> None:
+def update_auth_session_tokens(
+    session_id: str,
+    token_or_access: str,
+    refresh_token: Optional[str] = None
+) -> bool:
     """
-    Actualiza los tokens de acceso y refresco de una sesión existente.
+    Actualiza el refresh_token cifrado tras la rotación de Supabase.
+    Acepta update_auth_session_tokens(session_id, refresh_token)
+    y update_auth_session_tokens(session_id, access_token, refresh_token) por compatibilidad.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE auth_sessions
-            SET access_token = ?, refresh_token = ?
-            WHERE session_id = ?;
-        """, (access_token, refresh_token, session_id))
-        conn.commit()
+    actual_rt = refresh_token if refresh_token is not None else token_or_access
+    client = _get_service_role_client()
+    if not client or not actual_rt:
+        return False
+
+    enc_rt = _encrypt_refresh_token(actual_rt)
+    if not enc_rt:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        client.table("auth_sessions").update({
+            "encrypted_refresh_token": enc_rt
+        }).eq("session_id_hash", sid_hash).execute()
+        return True
+    except Exception as e:
+        print(f"Error en update_auth_session_tokens (service_role): {e}")
+        return False
 
 
-def delete_auth_session(session_id: str) -> None:
+def delete_auth_session(session_id: str) -> bool:
     """
-    Elimina una sesión activa (por ejemplo, al hacer logout).
+    Elimina una sesión activa de auth_sessions mediante el hash del session_id.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
-        conn.commit()
+    client = _get_service_role_client()
+    if not client:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        client.table("auth_sessions").delete().eq("session_id_hash", sid_hash).execute()
+        return True
+    except Exception as e:
+        print(f"Error en delete_auth_session (service_role): {e}")
+        return False
 
 
 def cleanup_expired_sessions() -> None:
     """
-    Limpia todas las sesiones expiradas en la base de datos.
+    Limpia todas las sesiones expiradas en auth_sessions usando service_role.
     """
-    from datetime import datetime
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            DELETE FROM auth_sessions
-            WHERE expires_at < ?;
-        """, (datetime.now().isoformat(),))
-        conn.commit()
+    client = _get_service_role_client()
+    if not client:
+        return
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        client.table("auth_sessions").delete().lt("expires_at", now_iso).execute()
+    except Exception as e:
+        print(f"Error en cleanup_expired_sessions (service_role): {e}")
 
 
 
 if __name__ == "__main__":
-    print("Inicializando base de datos y creando tablas...")
-    create_tables()
-    print("¡Tablas creadas exitosamente!")
-    
+    print("Verificando conexión con Supabase...")
     apps_actuales = get_all_applications()
-    print(f"Total de aplicaciones en base de datos: {len(apps_actuales)}")
-
+    print(f"Total de aplicaciones en Supabase: {len(apps_actuales)}")

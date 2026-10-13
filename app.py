@@ -17,7 +17,6 @@ from supabase import create_client, Client
 
 # Importamos las funciones de la base de datos de la Fase 2, 4, 5.1 y 7
 from database import (
-    create_tables,
     insert_application,
     get_all_applications,
     get_application_by_id,
@@ -104,9 +103,6 @@ st.set_page_config(
     page_icon="💼",
     layout="wide"  # 'wide' aprovecha mejor el ancho de la pantalla para tablas y formularios
 )
-
-# Inicialización de tablas de SQLite (incluyendo migración i18n si aplica)
-create_tables()
 
 # ------------------------------------------------------------------------------
 # FASE 6.1: INTERNACIONALIZACIÓN (i18n) - RESOLUCIÓN DE IDIOMA
@@ -200,7 +196,6 @@ def establish_authenticated_session(user, session, email_fallback: str = "", hou
             session_id=new_sid,
             user_id=str(u_id),
             user_email=str(u_email),
-            access_token=str(session.access_token),
             refresh_token=str(session.refresh_token),
             hours=hours
         )
@@ -211,29 +206,18 @@ def establish_authenticated_session(user, session, email_fallback: str = "", hou
 persisted_sid = st.query_params.get("session_id")
 if persisted_sid and st.session_state.user is None:
     sess_data = get_auth_session(persisted_sid)
-    if sess_data:
+    if sess_data and sess_data.get("refresh_token"):
         try:
-            auth_res = None
-            try:
-                # Intentamos restaurar con el access_token y refresh_token actuales
-                auth_res = supabase.auth.set_session(sess_data["access_token"], sess_data["refresh_token"])
-            except Exception:
-                try:
-                    # Si el access_token expiró con Supabase (1 hr), refrescamos con refresh_token
-                    auth_res = supabase.auth.refresh_session(sess_data["refresh_token"])
-                except Exception:
-                    auth_res = None
-
-            if auth_res and auth_res.user:
+            auth_res = supabase.auth.refresh_session(sess_data["refresh_token"])
+            if auth_res and auth_res.user and auth_res.session:
                 st.session_state.user = auth_res.user
-                if auth_res.session:
-                    st.session_state.access_token = auth_res.session.access_token
-                    st.session_state.refresh_token = auth_res.session.refresh_token
-                    update_auth_session_tokens(persisted_sid, auth_res.session.access_token, auth_res.session.refresh_token)
-                    try:
-                        supabase.postgrest.auth(auth_res.session.access_token)
-                    except Exception:
-                        pass
+                st.session_state.access_token = auth_res.session.access_token
+                st.session_state.refresh_token = auth_res.session.refresh_token
+                update_auth_session_tokens(persisted_sid, auth_res.session.refresh_token)
+                try:
+                    supabase.postgrest.auth(auth_res.session.access_token)
+                except Exception:
+                    pass
                 # Sincronizar preferencia de idioma desde Supabase tras auto-login
                 try:
                     u_pref = get_user_preferred_language(user_id=str(auth_res.user.id), client=supabase)
@@ -247,14 +231,19 @@ if persisted_sid and st.session_state.user is None:
             else:
                 delete_auth_session(persisted_sid)
                 st.query_params.pop("session_id", None)
+                st.session_state.user = None
                 st.session_state["session_expired_notice"] = True
         except Exception:
             delete_auth_session(persisted_sid)
             st.query_params.pop("session_id", None)
+            st.session_state.user = None
             st.session_state["session_expired_notice"] = True
     else:
-        # La sesión superó las 4 horas o fue revocada
+        # La sesión superó las 4 horas o no existe
+        if persisted_sid:
+            delete_auth_session(persisted_sid)
         st.query_params.pop("session_id", None)
+        st.session_state.user = None
         st.session_state["session_expired_notice"] = True
 
 def is_token_expired(token: str) -> bool:
@@ -285,7 +274,7 @@ if st.session_state.get("user") is not None and "access_token" in st.session_sta
                     st.session_state.user = auth_res.user
                     cur_sid = st.query_params.get("session_id")
                     if cur_sid:
-                        update_auth_session_tokens(cur_sid, auth_res.session.access_token, auth_res.session.refresh_token)
+                        update_auth_session_tokens(cur_sid, auth_res.session.refresh_token)
                     supabase.postgrest.auth(auth_res.session.access_token)
                     refreshed_ok = True
             except Exception:
@@ -630,9 +619,6 @@ with col_usr3:
         st.rerun()
 
 st.divider()
-
-# Aseguramos la existencia de las tablas locales
-create_tables()
 
 # Título y encabezado principal
 st.title("💼 AI Job Application Tracker")
