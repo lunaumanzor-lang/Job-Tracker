@@ -5,6 +5,9 @@
 
 import os
 import re
+import json
+import base64
+import time
 from datetime import datetime, date
 import streamlit as st
 import streamlit.components.v1 as components
@@ -18,6 +21,7 @@ from database import (
     insert_application,
     get_all_applications,
     get_application_by_id,
+    update_application_status,
     update_application,
     delete_application,
     get_dashboard_counts,
@@ -253,12 +257,55 @@ if persisted_sid and st.session_state.user is None:
         st.query_params.pop("session_id", None)
         st.session_state["session_expired_notice"] = True
 
-# Inyectar el token de autenticación del usuario en el cliente PostgREST
-if "access_token" in st.session_state and st.session_state.access_token:
+def is_token_expired(token: str) -> bool:
+    if not token or not isinstance(token, str):
+        return True
     try:
-        supabase.postgrest.auth(st.session_state.access_token)
+        parts = token.split(".")
+        if len(parts) != 3:
+            return True
+        payload_b64 = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp", 0)
+        # Si faltan menos de 60 segundos o ya expiró
+        return time.time() >= (exp - 60)
     except Exception:
-        pass
+        return True
+
+# Inyectar el token de autenticación del usuario en el cliente PostgREST (y auto-refrescar si expiró)
+if st.session_state.get("user") is not None and "access_token" in st.session_state and st.session_state.access_token:
+    if is_token_expired(st.session_state.access_token):
+        refreshed_ok = False
+        if "refresh_token" in st.session_state and st.session_state.refresh_token:
+            try:
+                auth_res = supabase.auth.refresh_session(st.session_state.refresh_token)
+                if auth_res and auth_res.session:
+                    st.session_state.access_token = auth_res.session.access_token
+                    st.session_state.refresh_token = auth_res.session.refresh_token
+                    st.session_state.user = auth_res.user
+                    cur_sid = st.query_params.get("session_id")
+                    if cur_sid:
+                        update_auth_session_tokens(cur_sid, auth_res.session.access_token, auth_res.session.refresh_token)
+                    supabase.postgrest.auth(auth_res.session.access_token)
+                    refreshed_ok = True
+            except Exception:
+                refreshed_ok = False
+        if not refreshed_ok:
+            # Token expirado y no se pudo refrescar: limpiar sesión y mostrar pantalla de acceso
+            cur_sid = st.query_params.get("session_id")
+            if cur_sid:
+                delete_auth_session(cur_sid)
+            st.session_state.user = None
+            st.session_state.access_token = None
+            st.session_state.refresh_token = None
+            st.query_params.pop("session_id", None)
+            st.session_state["session_expired_notice"] = True
+            st.rerun()
+    else:
+        try:
+            supabase.postgrest.auth(st.session_state.access_token)
+        except Exception:
+            pass
 
 # 3. Crear la pantalla de Login y Registro
 def login_screen():
@@ -959,41 +1006,11 @@ if menu_opcion in ("dashboard", "📊 Dashboard"):
     st.subheader(t("dashboard_title"))
     st.caption(t("dashboard_caption"))
 
-    try:
-        # 1. Extraemos los datos de la nube (Supabase ya filtra por user_id automáticamente gracias al RLS)
-        response = supabase.table("applications").select("*").execute()
-        datos_dashboard = response.data or []
-    except Exception as e:
-        if "JWT expired" in str(e):
-            st.warning(t("session_expired_warning"))
-            datos_dashboard = []
-        else:
-            st.error(t("dashboard_load_error", error=e))
-            datos_dashboard = []
-
-    usando_sqlite_dash = False
-    if not datos_dashboard:
-        apps_locales = get_all_applications()
-        if apps_locales:
-            datos_dashboard = [dict(a) for a in apps_locales]
-            usando_sqlite_dash = True
+    datos_dashboard = get_all_applications()
 
     if not datos_dashboard:
         st.info(t("dashboard_empty"))
     else:
-        if usando_sqlite_dash:
-            col_sd1, col_sd2 = st.columns([3, 1])
-            with col_sd1:
-                st.info(f"💡 Mostrando {len(datos_dashboard)} postulaciones desde SQLite local.")
-                st.caption("Tus postulaciones aún no están en la nube de Supabase.")
-            with col_sd2:
-                st.write("")
-                if st.button("🚀 Sincronizar a Supabase", key="btn_sync_dash", use_container_width=True):
-                    with st.spinner("Subiendo postulaciones a Supabase..."):
-                        from sync_service import sync_sqlite_to_supabase
-                        res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id)
-                        st.success(f"¡Sincronización completada! {res_sync['inserted']} postulaciones subidas a la nube.")
-                        st.rerun()
 
         # 2. Pasamos los datos a Pandas para que tus gráficos originales funcionen
         df = pd.DataFrame(datos_dashboard)
@@ -1635,14 +1652,8 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
     # 3. Ingreso de Datos (Selección desde aplicaciones existentes o manual)
     st.markdown(f"### {t('analyzer_section_input')}")
 
-    # Obtenemos aplicaciones para el dropdown (de Supabase con fallback a SQLite)
-    try:
-        resp_apps = supabase.table("applications").select("id, company, position, job_url, notes").order("id", desc=False).execute()
-        apps_para_dropdown = resp_apps.data or []
-        if not apps_para_dropdown:
-            apps_para_dropdown = get_all_applications()
-    except Exception:
-        apps_para_dropdown = get_all_applications()
+    # Obtenemos aplicaciones para el dropdown desde Supabase
+    apps_para_dropdown = get_all_applications()
 
     metodo_origen = st.radio(
         t("analyzer_how_to_load"),
@@ -1956,95 +1967,36 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
                 url_final = url_guardar_val.strip() if url_guardar_val.strip() else None
                 notas_finales = notes_val.strip() if notes_val.strip() else None
 
-                # 1. Calculamos ID consecutivo y guardamos en Supabase
-                proximo_id = None
-                try:
-                    res_max = supabase.table("applications").select("id").order("id", desc=True).limit(1).execute()
-                    if res_max.data and len(res_max.data) > 0:
-                        proximo_id = int(res_max.data[0]["id"]) + 1
-                    else:
-                        proximo_id = 1
-                except Exception:
-                    proximo_id = None
+                nuevo_id = insert_application(
+                    company=company_val.strip(),
+                    position=position_val.strip(),
+                    status=status_val,
+                    application_date=fecha_str,
+                    salary=salario_limpio,
+                    work_mode=work_mode_val,
+                    location=location_val.strip() if location_val.strip() else None,
+                    job_url=url_final,
+                    notes=notas_finales
+                )
 
-                nueva_app_cloud = {
-                    "user_id": st.session_state.user.id,
-                    "company": company_val.strip(),
-                    "position": position_val.strip(),
-                    "status": status_val,
-                    "application_date": fecha_str,
-                    "salary": salario_limpio,
-                    "work_mode": work_mode_val,
-                    "location": location_val.strip() if location_val.strip() else None,
-                    "job_url": url_final,
-                    "notes": notas_finales
-                }
-                if proximo_id is not None:
-                    nueva_app_cloud["id"] = proximo_id
+                if not nuevo_id:
+                    st.error("No se pudo guardar la postulación en la base de datos." if st.session_state.get("lang") == "es" else "Failed to save application to database.")
+                else:
+                    # PASO 0: Persistir las habilidades evaluadas en la tabla 'skills'
+                    skills_a_guardar = []
+                    for s in strong_matches:
+                        skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "strong"})
+                    for s in partial_matches:
+                        skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "partial"})
+                    for s in missing_skills:
+                        skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "missing"})
 
-                nuevo_id = None
-                try:
-                    try:
-                        res_sb = supabase.table("applications").insert(nueva_app_cloud).execute()
-                    except Exception:
-                        nueva_app_cloud.pop("id", None)
-                        res_sb = supabase.table("applications").insert(nueva_app_cloud).execute()
-                    nuevo_id = res_sb.data[0]["id"]
-                except Exception as ex_sb:
-                    st.warning(f"Aviso al guardar en Supabase: {ex_sb}")
+                    if skills_a_guardar:
+                        total_guardadas = insert_application_skills(nuevo_id, skills_a_guardar)
+                        st.caption(t("analyzer_skills_linked", count=total_guardadas))
 
-                # 2. Guardamos también en SQLite local por consistencia
-                try:
-                    from database import get_connection
-                    with get_connection() as conn:
-                        c_loc = conn.cursor()
-                        if nuevo_id is not None:
-                            c_loc.execute("""
-                                INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (nuevo_id, company_val.strip(), position_val.strip(), status_val, fecha_str, salario_limpio, work_mode_val, location_val.strip() if location_val.strip() else None, url_final, notas_finales))
-                        else:
-                            nuevo_id = insert_application(
-                                company=company_val.strip(),
-                                position=position_val.strip(),
-                                status=status_val,
-                                application_date=fecha_str,
-                                salary=salario_limpio,
-                                work_mode=work_mode_val,
-                                location=location_val.strip() if location_val.strip() else None,
-                                job_url=url_final,
-                                notes=notas_finales
-                            )
-                        conn.commit()
-                except Exception:
-                    if nuevo_id is None:
-                        nuevo_id = insert_application(
-                            company=company_val.strip(),
-                            position=position_val.strip(),
-                            status=status_val,
-                            application_date=fecha_str,
-                            salary=salario_limpio,
-                            work_mode=work_mode_val,
-                            location=location_val.strip() if location_val.strip() else None,
-                            job_url=url_final,
-                            notes=notas_finales
-                        )
-
-                # PASO 0: Persistir las habilidades evaluadas en la tabla 'skills'
-                skills_a_guardar = []
-                for s in strong_matches:
-                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "strong"})
-                for s in partial_matches:
-                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "partial"})
-                for s in missing_skills:
-                    skills_a_guardar.append({"skill": s.get("skill", ""), "match_status": "missing"})
-
-                if skills_a_guardar and nuevo_id:
-                    total_guardadas = insert_application_skills(nuevo_id, skills_a_guardar)
-                    st.caption(t("analyzer_skills_linked", count=total_guardadas))
-
-                st.success(t("analyzer_app_saved_success", company=company_val, id=nuevo_id))
-                st.balloons()
+                    st.success(t("analyzer_app_saved_success", company=company_val, id=nuevo_id))
+                    st.balloons()
 
 
 # ==============================================================================
@@ -2052,88 +2004,11 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
 # ==============================================================================
 elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
 
-    usando_sqlite_view = False
-    # 1. Obtenemos todas las aplicaciones desde Supabase
-    try:
-        # Supabase devuelve los datos directamente como una lista de diccionarios
-        response = supabase.table("applications").select("*").order("id", desc=True).execute()
-        todas_las_apps = response.data or []
-        
-        # Sincronización automática hacia SQLite local para asegurar consistencia
-        if todas_las_apps:
-            try:
-                from database import get_connection
-                with get_connection() as conn:
-                    c_sync = conn.cursor()
-                    for item in todas_las_apps:
-                        c_sync.execute("""
-                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET
-                                company=excluded.company,
-                                position=excluded.position,
-                                status=excluded.status,
-                                application_date=excluded.application_date,
-                                salary=excluded.salary,
-                                work_mode=excluded.work_mode,
-                                location=excluded.location,
-                                job_url=excluded.job_url,
-                                notes=excluded.notes,
-                                follow_up_date=excluded.follow_up_date
-                        """, (
-                            item.get("id"),
-                            item.get("company"),
-                            item.get("position"),
-                            item.get("status") or "Applied",
-                            item.get("application_date"),
-                            item.get("salary"),
-                            item.get("work_mode"),
-                            item.get("location"),
-                            item.get("job_url"),
-                            item.get("notes"),
-                            item.get("follow_up_date")
-                        ))
-                    conn.commit()
-            except Exception:
-                pass
-    except Exception as e:
-        if "JWT expired" in str(e):
-            st.warning(t("session_expired_warning"))
-        else:
-            st.warning(f"Aviso al sincronizar con la nube: {e}")
-        try:
-            todas_las_apps = get_all_applications()
-            usando_sqlite_view = True
-        except Exception:
-            todas_las_apps = []
+    todas_las_apps = get_all_applications()
 
     if not todas_las_apps:
-        # Fallback a SQLite si Supabase devolvió lista vacía
-        try:
-            apps_locales = get_all_applications()
-            if apps_locales:
-                todas_las_apps = [dict(a) for a in apps_locales]
-                usando_sqlite_view = True
-        except Exception:
-            pass
-
-    if not todas_las_apps:
-        st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera.")
+        st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera." if st.session_state.get("lang") == "es" else "No applications registered yet. Go to '➕ Add New Application' to create the first one.")
     else:
-        if usando_sqlite_view:
-            col_sv1, col_sv2 = st.columns([3, 1])
-            with col_sv1:
-                st.info(f"💡 Mostrando {len(todas_las_apps)} postulaciones desde SQLite local.")
-                st.caption("Tus aplicaciones están guardadas localmente. Súbelas a Supabase para tenerlas en la nube.")
-            with col_sv2:
-                st.write("")
-                if st.button("🚀 Sincronizar a Supabase", key="btn_sync_view_apps", use_container_width=True):
-                    with st.spinner("Subiendo aplicaciones a Supabase..."):
-                        from sync_service import sync_sqlite_to_supabase
-                        res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id)
-                        st.success(f"¡Sincronizadas {res_sync['inserted']} aplicaciones a Supabase!")
-                        st.rerun()
-
         # Convertimos la lista de diccionarios a un DataFrame de pandas para facilitar búsquedas y filtros
         df = pd.DataFrame(todas_las_apps)
 
@@ -2223,41 +2098,6 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                 app_actual = get_application_by_id(app_id_seleccionado)
 
             if app_actual:
-                # Asegurar que esté sincronizado en SQLite local para las demás funcionalidades
-                try:
-                    from database import get_connection
-                    with get_connection() as conn:
-                        c_chk = conn.cursor()
-                        c_chk.execute("""
-                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET
-                                company=excluded.company,
-                                position=excluded.position,
-                                status=excluded.status,
-                                application_date=excluded.application_date,
-                                salary=excluded.salary,
-                                work_mode=excluded.work_mode,
-                                location=excluded.location,
-                                job_url=excluded.job_url,
-                                notes=excluded.notes,
-                                follow_up_date=excluded.follow_up_date
-                        """, (
-                            app_actual.get("id"),
-                            app_actual.get("company"),
-                            app_actual.get("position"),
-                            app_actual.get("status") or "Applied",
-                            app_actual.get("application_date"),
-                            app_actual.get("salary"),
-                            app_actual.get("work_mode"),
-                            app_actual.get("location"),
-                            app_actual.get("job_url"),
-                            app_actual.get("notes"),
-                            app_actual.get("follow_up_date")
-                        ))
-                        conn.commit()
-                except Exception:
-                    pass
                 # Mostramos los detalles y el formulario de edición
                 col_detalle, col_edicion = st.columns([1, 1], gap="large")
 
@@ -2321,32 +2161,12 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                         if st.button(t("app_detail_delete_btn"), type="primary", disabled=not confirmar_borrado):
                             id_a_borrar = app_actual["id"]
                             with st.spinner(t("app_detail_delete_spinner", id=id_a_borrar)):
-                                error_supabase = None
-                                try:
-                                    # 1. Eliminar la fila seleccionada en Supabase
-                                    supabase.table("applications").delete().eq("id", id_a_borrar).execute()
-                                    
-                                    # 2. Re-acomodar el orden en Supabase: desplazar hacia abajo (id = id - 1)
-                                    # las aplicaciones posteriores en orden ascendente para evitar colisiones de clave primaria
-                                    resp_posteriores = supabase.table("applications").select("id").gt("id", id_a_borrar).order("id", desc=False).execute()
-                                    for fila in resp_posteriores.data or []:
-                                        viejo_id = fila["id"]
-                                        nuevo_id = viejo_id - 1
-                                        supabase.table("applications").update({"id": nuevo_id}).eq("id", viejo_id).execute()
-                                except Exception as ex_sup:
-                                    error_supabase = ex_sup
-
-                                # 3. Sincronizar el borrado y reajuste en SQLite local
-                                try:
-                                    delete_application(id_a_borrar)
-                                except Exception as ex_sql:
-                                    pass
-
-                                if error_supabase:
-                                    st.error(t("app_detail_delete_err_supabase", error=error_supabase))
-                                else:
+                                ok = delete_application(id_a_borrar)
+                                if ok:
                                     st.success(t("app_detail_delete_success", id=id_a_borrar))
                                     st.rerun()
+                                else:
+                                    st.error(t("app_detail_delete_err_supabase", error="No se pudo eliminar la postulación."))
 
                 # PANEL DERECHO: FORMULARIO DE EDICIÓN (Requisito 4)
                 with col_edicion:
@@ -2439,62 +2259,25 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                                 else:
                                     salary_edit_final = raw_es
 
-                            # 1. Actualizamos en Supabase (en la nube)
-                            try:
-                                datos_actualizados = {
-                                    "company": edit_company.strip(),
-                                    "position": edit_position.strip(),
-                                    "status": edit_status,
-                                    "application_date": fecha_str,
-                                    "salary": salary_edit_final,
-                                    "work_mode": edit_mode,
-                                    "location": edit_location.strip() if edit_location else None,
-                                    "job_url": edit_job_url.strip() if edit_job_url else None,
-                                    "notes": edit_notes.strip() if edit_notes else None,
-                                    "follow_up_date": fup_str
-                                }
-                                supabase.table("applications").update(datos_actualizados).eq("id", app_actual["id"]).execute()
+                            ok = update_application(
+                                app_id=app_actual["id"],
+                                company=edit_company.strip(),
+                                position=edit_position.strip(),
+                                status=edit_status,
+                                application_date=fecha_str,
+                                salary=salary_edit_final,
+                                work_mode=edit_mode,
+                                location=edit_location.strip() if edit_location else None,
+                                job_url=edit_job_url.strip() if edit_job_url else None,
+                                notes=edit_notes.strip() if edit_notes else None,
+                                follow_up_date=fup_str
+                            )
 
-                                # 2. Sincronizamos también en SQLite local por consistencia
-                                try:
-                                    from database import get_connection
-                                    with get_connection() as conn:
-                                        c_up = conn.cursor()
-                                        c_up.execute("""
-                                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                            ON CONFLICT(id) DO UPDATE SET
-                                                company=excluded.company,
-                                                position=excluded.position,
-                                                status=excluded.status,
-                                                application_date=excluded.application_date,
-                                                salary=excluded.salary,
-                                                work_mode=excluded.work_mode,
-                                                location=excluded.location,
-                                                job_url=excluded.job_url,
-                                                notes=excluded.notes,
-                                                follow_up_date=excluded.follow_up_date
-                                        """, (
-                                            app_actual["id"],
-                                            edit_company.strip(),
-                                            edit_position.strip(),
-                                            edit_status,
-                                            fecha_str,
-                                            salary_edit_final,
-                                            edit_mode,
-                                            edit_location.strip() if edit_location else None,
-                                            edit_job_url.strip() if edit_job_url else None,
-                                            edit_notes.strip() if edit_notes else None,
-                                            fup_str
-                                        ))
-                                        conn.commit()
-                                except Exception:
-                                    pass
-
+                            if ok:
                                 st.success(t("msg_app_updated_cloud_success"))
                                 st.rerun()
-                            except Exception as e:
-                                st.error(t("msg_app_update_cloud_error", error=e))
+                            else:
+                                st.error(t("msg_app_update_cloud_error", error="No se pudo actualizar la postulación."))
 
                 # --------------------------------------------------------------
                 # FASE 5.3: INTERVIEW COACH INTEGRADO
@@ -2725,81 +2508,27 @@ elif menu_opcion in ("add_app", "➕ Agregar Nueva Aplicación"):
             fecha_str = app_date.strftime("%Y-%m-%d")
             fup_nuevo_str = fup_date_nuevo.strftime("%Y-%m-%d") if (asignar_fup_nuevo and fup_date_nuevo) else None
             
-            # Calculamos el próximo ID consecutivo para mantener la secuencia continua
-            proximo_id = None
-            try:
-                res_max = supabase.table("applications").select("id").order("id", desc=True).limit(1).execute()
-                if res_max.data and len(res_max.data) > 0:
-                    proximo_id = int(res_max.data[0]["id"]) + 1
-                else:
-                    proximo_id = 1
-            except Exception:
-                proximo_id = None
+            nuevo_id = insert_application(
+                company=company.strip(),
+                position=position.strip(),
+                status=status,
+                application_date=fecha_str,
+                salary=salary_limpio,
+                work_mode=work_mode,
+                location=location.strip() if location else None,
+                job_url=job_url.strip() if job_url else None,
+                notes=notes.strip() if notes else None,
+                follow_up_date=fup_nuevo_str
+            )
 
-            # 1. Empaquetar los datos para Supabase
-            nueva_aplicacion = {
-                "user_id": st.session_state.user.id,  # Vincula el registro al usuario logueado
-                "company": company.strip(),
-                "position": position.strip(),
-                "status": status,
-                "application_date": fecha_str,
-                "salary": salary_limpio,
-                "work_mode": work_mode,
-                "location": location.strip() if location else None,
-                "job_url": job_url.strip() if job_url else None,
-                "notes": notes.strip() if notes else None,
-                "follow_up_date": fup_nuevo_str
-            }
-            if proximo_id is not None:
-                nueva_aplicacion["id"] = proximo_id
-
-            try:
-                # 2. Enviar a Supabase
-                try:
-                    response = supabase.table("applications").insert(nueva_aplicacion).execute()
-                except Exception:
-                    # En caso de restricción con ID explícito, insertar con auto-secuencia
-                    nueva_aplicacion.pop("id", None)
-                    response = supabase.table("applications").insert(nueva_aplicacion).execute()
-                
-                # 3. Extraer el nuevo ID de la respuesta de la nube
-                nuevo_id = response.data[0]['id']
-
-                # 4. Sincronizar en la base SQLite local por consistencia
-                try:
-                    from database import get_connection
-                    with get_connection() as conn:
-                        c_loc = conn.cursor()
-                        c_loc.execute("""
-                            INSERT INTO applications (id, company, position, status, application_date, salary, work_mode, location, job_url, notes, follow_up_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            nuevo_id,
-                            company.strip(),
-                            position.strip(),
-                            status,
-                            fecha_str,
-                            salary_limpio,
-                            work_mode,
-                            location.strip() if location else None,
-                            job_url.strip() if job_url else None,
-                            notes.strip() if notes else None,
-                            fup_nuevo_str
-                        ))
-                        conn.commit()
-                except Exception:
-                    pass
-
+            if nuevo_id:
                 for k in ["new_app_company", "new_app_position", "new_app_location", "new_app_work_mode", "new_app_salary", "new_app_salary_curr", "new_app_url", "new_app_notes"]:
                     st.session_state.pop(k, None)
                 st.session_state["add_app_ver"] = form_ver + 1
 
                 st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
-            except Exception as e:
-                if "row-level security" in str(e).lower() and ("access_token" not in st.session_state or not st.session_state.access_token):
-                    st.error("⚠️ Tu sesión actual no tiene el token de base de datos activado. Por favor haz clic en **Cerrar Sesión** (arriba a la derecha) e inicia sesión nuevamente para sincronizar los permisos RLS.")
-                else:
-                    st.error(f"⚠️ Error al guardar en Supabase: {e}")
+            else:
+                st.error("⚠️ No se pudo guardar la postulación en la base de datos.")
 
 
 # ==============================================================================
@@ -2809,18 +2538,8 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
     st.subheader(t("coach_title"))
     st.caption(t("coach_caption"))
 
-    # 1. Obtenemos todas las aplicaciones desde Supabase o SQLite
-    todas_las_apps = []
-    try:
-        response = supabase.table("applications").select("*").order("id", desc=True).execute()
-        todas_las_apps = response.data or []
-        if not todas_las_apps:
-            todas_las_apps = get_all_applications()
-    except Exception:
-        try:
-            todas_las_apps = get_all_applications()
-        except Exception:
-            todas_las_apps = []
+    # 1. Obtenemos todas las aplicaciones desde Supabase
+    todas_las_apps = get_all_applications()
 
     if not todas_las_apps:
         st.info(t("coach_no_apps_available"))

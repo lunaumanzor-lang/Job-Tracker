@@ -6,7 +6,9 @@
 import os
 import re
 import sqlite3
+from datetime import date
 from typing import List, Dict, Optional, Any
+import pandas as pd
 from supabase import Client
 
 # Directorio base del proyecto (donde reside este archivo .py)
@@ -326,7 +328,7 @@ def get_all_distinct_categories(user_id: Optional[str] = None, client: Any = Non
 
 
 # ------------------------------------------------------------------------------
-# 2. OPERACIONES CRUD: CREATE (Insertar)
+# 2. OPERACIONES CRUD: APPLICATIONS (Módulo 4 - Migración Supabase)
 # ------------------------------------------------------------------------------
 def insert_application(
     company: str,
@@ -339,115 +341,227 @@ def insert_application(
     job_url: Optional[str] = None,
     recruiter: Optional[str] = None,
     notes: Optional[str] = None,
-    follow_up_date: Optional[str] = None
+    follow_up_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta una nueva aplicación en la base de datos usando consultas parametrizadas (?)
-    para evitar inyecciones SQL.
-    
-    Retorna:
-        El ID autogenerado del nuevo registro insertado.
+    Inserta una nueva postulación en Supabase vinculada al usuario autenticado.
+    Retorna el ID numérico generado.
     """
-    query = """
-    INSERT INTO applications (
-        company, position, status, application_date, salary,
-        work_mode, location, job_url, recruiter, notes, follow_up_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    """
-    params = (
-        company, position, status, application_date, salary,
-        work_mode, location, job_url, recruiter, notes, follow_up_date
-    )
-    
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return cursor.lastrowid
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en insert_application: no hay cliente de sesión o usuario autenticado")
+        return 0
+
+    clean_app_date = application_date.strip() if application_date and application_date.strip() else None
+    clean_fup_date = follow_up_date.strip() if follow_up_date and follow_up_date.strip() else None
+
+    payload = {
+        "user_id": uid,
+        "company": company.strip() if company else "",
+        "position": position.strip() if position else "",
+        "status": status.strip() if status else "Applied",
+        "application_date": clean_app_date,
+        "salary": salary.strip() if salary and salary.strip() else None,
+        "work_mode": work_mode.strip() if work_mode and work_mode.strip() else None,
+        "location": location.strip() if location and location.strip() else None,
+        "job_url": job_url.strip() if job_url and job_url.strip() else None,
+        "recruiter": recruiter.strip() if recruiter and recruiter.strip() else None,
+        "notes": notes.strip() if notes and notes.strip() else None,
+        "follow_up_date": clean_fup_date
+    }
+
+    try:
+        res = client.table("applications").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        err_msg = str(e)
+        if "applications_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
+            try:
+                res_max = client.table("applications").select("id").order("id", desc=True).limit(1).execute()
+                max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
+                payload_fallback = dict(payload)
+                payload_fallback["id"] = max_id + 1
+                res_fb = client.table("applications").insert(payload_fallback).execute()
+                if res_fb.data and len(res_fb.data) > 0:
+                    return res_fb.data[0].get("id", 0)
+            except Exception as e_fb:
+                print(f"Error en fallback de ID para applications: {e_fb}")
+        print(f"Error al insertar aplicación en Supabase: {e}")
+        return 0
 
 
-def insert_application_skills(application_id: int, skills: List[Dict[str, str]]) -> int:
+def insert_application_skills(
+    application_id: int,
+    skills: List[Dict[str, str]],
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> int:
     """
-    Inserta las habilidades asociadas a una vacante con su estado de coincidencia ('strong', 'partial', 'missing').
-    
-    Parámetros:
-        application_id: ID de la aplicación en la tabla applications.
-        skills: Lista de diccionarios, ej. [{"skill": "Python", "match_status": "strong"}]
-        
-    Retorna:
-        Cantidad de habilidades insertadas.
+    Inserta las habilidades asociadas a una postulación con su match_status en Supabase,
+    vinculadas tanto a application_id como a user_id.
+    Retorna la cantidad de habilidades insertadas.
     """
-    query = """
-    INSERT INTO skills (application_id, skill, match_status)
-    VALUES (?, ?, ?);
-    """
-    insertados = 0
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for item in skills:
-            nombre = item.get("skill", "").strip()
-            status = item.get("match_status", "strong").strip()
-            if nombre:
-                cursor.execute(query, (application_id, nombre, status))
-                insertados += 1
-        conn.commit()
-    return insertados
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en insert_application_skills: no hay cliente de sesión o usuario autenticado")
+        return 0
+
+    filas = []
+    for item in skills:
+        nombre = item.get("skill", "").strip()
+        st_match = item.get("match_status", "strong").strip()
+        if nombre:
+            filas.append({
+                "user_id": uid,
+                "application_id": application_id,
+                "skill": nombre,
+                "match_status": st_match
+            })
+
+    if not filas:
+        return 0
+
+    try:
+        res = client.table("skills").insert(filas).execute()
+        return len(res.data) if res.data else 0
+    except Exception as e:
+        err_msg = str(e)
+        if "skills_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
+            try:
+                res_max = client.table("skills").select("id").order("id", desc=True).limit(1).execute()
+                max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
+                filas_fallback = []
+                for idx, f in enumerate(filas, start=1):
+                    f_copy = dict(f)
+                    f_copy["id"] = max_id + idx
+                    filas_fallback.append(f_copy)
+                res_fb = client.table("skills").insert(filas_fallback).execute()
+                return len(res_fb.data) if res_fb.data else 0
+            except Exception as e_fb:
+                print(f"Error en fallback de ID para skills: {e_fb}")
+        print(f"Error al insertar habilidades de aplicación en Supabase: {e}")
+        return 0
 
 
-def get_skills_by_application(application_id: int) -> List[Dict[str, Any]]:
+def get_skills_by_application(
+    application_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Recupera todas las habilidades vinculadas a una postulación específica,
-    indicando el estado de match ('strong', 'partial', 'missing').
+    Recupera todas las habilidades de una postulación específica para el usuario autenticado.
     """
-    query = "SELECT id, application_id, skill, match_status FROM skills WHERE application_id = ? ORDER BY id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (application_id,))
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_skills_by_application: no hay cliente de sesión o usuario autenticado")
+        return []
+
+    try:
+        res = (
+            client.table("skills")
+            .select("*")
+            .eq("application_id", application_id)
+            .eq("user_id", uid)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener habilidades de la postulación {application_id} en Supabase: {e}")
+        return []
 
 
-# ------------------------------------------------------------------------------
-# 3. OPERACIONES CRUD: READ (Consultar)
-# ------------------------------------------------------------------------------
-def get_all_applications() -> List[Dict[str, Any]]:
+def get_all_applications(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene todas las aplicaciones ordenadas por ID de forma descendente.
-    Retorna una lista de diccionarios limpios.
+    Obtiene todas las postulaciones del usuario autenticado ordenadas por ID descendente.
     """
-    query = "SELECT * FROM applications ORDER BY id DESC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        # Convertimos sqlite3.Row a dict estándar de Python
-        return [dict(row) for row in rows]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_all_applications: no hay cliente de sesión o usuario autenticado")
+        return []
+
+    try:
+        res = (
+            client.table("applications")
+            .select("*")
+            .eq("user_id", uid)
+            .order("id", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener postulaciones en Supabase: {e}")
+        return []
 
 
-def get_application_by_id(app_id: int) -> Optional[Dict[str, Any]]:
+def get_application_by_id(
+    app_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Optional[Dict[str, Any]]:
     """
-    Busca una aplicación específica por su identificador primario (id).
+    Busca una postulación específica por ID para el usuario autenticado.
     """
-    query = "SELECT * FROM applications WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (app_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_application_by_id: no hay cliente de sesión o usuario autenticado")
+        return None
+
+    try:
+        res = (
+            client.table("applications")
+            .select("*")
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        return None
+    except Exception as e:
+        print(f"Error al obtener aplicación {app_id} en Supabase: {e}")
+        return None
 
 
-# ------------------------------------------------------------------------------
-# 4. OPERACIONES CRUD: UPDATE (Actualizar)
-# ------------------------------------------------------------------------------
-def update_application_status(app_id: int, new_status: str) -> bool:
+def update_application_status(
+    app_id: int,
+    new_status: str,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Actualiza el estado de una aplicación existente (ej. de 'Applied' a 'Interview').
+    Actualiza el estado de una postulación en Supabase, acotado al usuario autenticado.
     """
-    query = "UPDATE applications SET status = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_status, app_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_application_status: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("applications")
+            .update({"status": new_status.strip()})
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar estado de la aplicación {app_id} en Supabase: {e}")
+        return False
 
 
 def update_application(
@@ -461,98 +575,122 @@ def update_application(
     location: Optional[str] = None,
     job_url: Optional[str] = None,
     notes: Optional[str] = None,
-    follow_up_date: Optional[str] = None
+    follow_up_date: Optional[str] = None,
+    recruiter: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza todos los campos editables de una aplicación existente en SQLite,
-    incluyendo la fecha de seguimiento (follow_up_date).
+    Actualiza los campos editables de una postulación en Supabase, acotado al usuario autenticado.
     """
-    query = """
-    UPDATE applications
-    SET company = ?, position = ?, status = ?, application_date = ?,
-        salary = ?, work_mode = ?, location = ?, job_url = ?, notes = ?, follow_up_date = ?
-    WHERE id = ?;
-    """
-    params = (
-        company, position, status, application_date,
-        salary, work_mode, location, job_url, notes, follow_up_date, app_id
-    )
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_application: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    clean_app_date = application_date.strip() if application_date and application_date.strip() else None
+    clean_fup_date = follow_up_date.strip() if follow_up_date and follow_up_date.strip() else None
+
+    payload = {
+        "company": company.strip() if company else "",
+        "position": position.strip() if position else "",
+        "status": status.strip() if status else "Applied",
+        "application_date": clean_app_date,
+        "salary": salary.strip() if salary and salary.strip() else None,
+        "work_mode": work_mode.strip() if work_mode and work_mode.strip() else None,
+        "location": location.strip() if location and location.strip() else None,
+        "job_url": job_url.strip() if job_url and job_url.strip() else None,
+        "notes": notes.strip() if notes and notes.strip() else None,
+        "follow_up_date": clean_fup_date
+    }
+    if recruiter is not None:
+        payload["recruiter"] = recruiter.strip() if recruiter and recruiter.strip() else None
+
+    try:
+        res = (
+            client.table("applications")
+            .update(payload)
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar aplicación {app_id} en Supabase: {e}")
+        return False
 
 
+def delete_application(
+    app_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
+    """
+    Elimina una postulación de Supabase, acotado al usuario autenticado.
+    NO renumera IDs (mantiene la integridad referencial y secuencias de PostgreSQL).
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_application: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    try:
+        client.table("skills").delete().eq("application_id", app_id).eq("user_id", uid).execute()
+        client.table("interviews").delete().eq("application_id", app_id).eq("user_id", uid).execute()
+        res = (
+            client.table("applications")
+            .delete()
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar aplicación {app_id} en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
-# 5. OPERACIONES CRUD: DELETE (Eliminar)
+# 6. MÉTRICAS Y AGREGACIONES DEL DASHBOARD CON PANDAS (Módulo 4)
 # ------------------------------------------------------------------------------
-def delete_application(app_id: int) -> bool:
+def get_dashboard_counts(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Elimina una aplicación por su ID y reacomoda los IDs de todas las aplicaciones
-    posteriores (id = id - 1) para mantener una secuencia continua sin huecos.
+    Calcula las 5 métricas clave para el usuario autenticado usando Pandas en memoria:
+    - total_applications
+    - interviews ('Recruiter Screen', 'Technical Interview', 'Final Interview')
+    - offers ('Offer')
+    - rejections ('Rejected')
+    - follow_ups (follow_up_date <= hoy)
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = OFF;")
-        cursor.execute("DELETE FROM applications WHERE id = ?;", (app_id,))
-        deleted = cursor.rowcount > 0
-        if deleted:
-            cursor.execute("DELETE FROM skills WHERE application_id = ?;", (app_id,))
-            cursor.execute("DELETE FROM interviews WHERE application_id = ?;", (app_id,))
-            cursor.execute("UPDATE applications SET id = id - 1 WHERE id > ?;", (app_id,))
-            cursor.execute("UPDATE skills SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
-            cursor.execute("UPDATE interviews SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
-            cursor.execute("UPDATE sqlite_sequence SET seq = COALESCE((SELECT MAX(id) FROM applications), 0) WHERE name = 'applications';")
-        cursor.execute("PRAGMA foreign_keys = ON;")
-        conn.commit()
-        return deleted
+    default = {
+        "total_applications": 0,
+        "interviews": 0,
+        "offers": 0,
+        "rejections": 0,
+        "follow_ups": 0
+    }
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return default
 
+    try:
+        df = pd.DataFrame(apps)
+        total_apps = len(df)
+        interviews = len(df[df["status"].isin(["Recruiter Screen", "Technical Interview", "Final Interview"])]) if "status" in df.columns else 0
+        offers = len(df[df["status"] == "Offer"]) if "status" in df.columns else 0
+        rejections = len(df[df["status"] == "Rejected"]) if "status" in df.columns else 0
 
-# ------------------------------------------------------------------------------
-# 6. CONSULTAS DE AGREGACIÓN PARA EL DASHBOARD (Sub-fase 4a)
-# ------------------------------------------------------------------------------
-def get_dashboard_counts() -> Dict[str, int]:
-    """
-    Ejecuta consultas de agregación SQL (COUNT) para calcular las 5 métricas clave:
-    1. Total applications: conteo absoluto de postulaciones.
-    2. Interviews: según la regla de negocio (Recruiter Screen, Technical Interview, Final Interview).
-    3. Offers: ofertas recibidas.
-    4. Rejections: postulaciones rechazadas.
-    5. Follow-ups: postulaciones con fecha de seguimiento asignada que esté próxima o vencida.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        # 1. Total Applications (COUNT(*) cuenta todas las filas)
-        cursor.execute("SELECT COUNT(*) FROM applications;")
-        total_apps = cursor.fetchone()[0]
-
-        # 2. Interviews (Cláusula IN para múltiples valores)
-        cursor.execute("""
-            SELECT COUNT(*) FROM applications
-            WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview');
-        """)
-        interviews = cursor.fetchone()[0]
-
-        # 3. Offers
-        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Offer';")
-        offers = cursor.fetchone()[0]
-
-        # 4. Rejections
-        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Rejected';")
-        rejections = cursor.fetchone()[0]
-
-        # 5. Follow-ups: con fecha de seguimiento definida y vencida o para hoy
-        cursor.execute("""
-            SELECT COUNT(*) FROM applications
-            WHERE follow_up_date IS NOT NULL
-              AND follow_up_date != ''
-              AND date(follow_up_date) <= date('now');
-        """)
-        follow_ups = cursor.fetchone()[0]
+        today_str = date.today().isoformat()
+        if "follow_up_date" in df.columns:
+            valid_fu = df["follow_up_date"].dropna().astype(str).str.strip()
+            follow_ups = int(((valid_fu != "") & (valid_fu <= today_str)).sum())
+        else:
+            follow_ups = 0
 
         return {
             "total_applications": total_apps,
@@ -561,16 +699,17 @@ def get_dashboard_counts() -> Dict[str, int]:
             "rejections": rejections,
             "follow_ups": follow_ups
         }
+    except Exception as e:
+        print(f"Error al calcular get_dashboard_counts con pandas: {e}")
+        return default
 
 
-def get_status_breakdown() -> Dict[str, int]:
+def get_status_breakdown(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Obtiene la cantidad de aplicaciones agrupadas por cada estado (Status).
-    
-    CONCEPTO SQL - GROUP BY:
-    En lugar de hacer 7 consultas con WHERE para cada estado, GROUP BY le pide
-    al motor de base de datos que agrupe las filas que tengan el mismo 'status'
-    y aplique COUNT(*) a cada uno de esos grupos en una sola operación de alto rendimiento.
+    Calcula la distribución de postulaciones por estado para el usuario autenticado usando Pandas.
     """
     estados_base = [
         "Applied",
@@ -581,128 +720,170 @@ def get_status_breakdown() -> Dict[str, int]:
         "Rejected",
         "Ghosted"
     ]
-    # Inicializamos el diccionario con 0 para que todos los estados existan
     breakdown = {estado: 0 for estado in estados_base}
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return breakdown
 
-    query = "SELECT status, COUNT(*) FROM applications GROUP BY status;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        for row in cursor.fetchall():
-            status_name = row[0]
-            count = row[1]
-            breakdown[status_name] = count
+    try:
+        df = pd.DataFrame(apps)
+        if "status" in df.columns:
+            counts = df["status"].value_counts().to_dict()
+            for st_name, cnt in counts.items():
+                if st_name:
+                    breakdown[st_name] = int(cnt)
+        return breakdown
+    except Exception as e:
+        print(f"Error al calcular get_status_breakdown con pandas: {e}")
+        return breakdown
 
-    return breakdown
 
-
-# ------------------------------------------------------------------------------
-# 7. CONSULTAS Y CÁLCULOS ESTADÍSTICOS (Fase 7: Statistics)
-# ------------------------------------------------------------------------------
-def get_work_mode_breakdown() -> Dict[str, int]:
+def get_work_mode_breakdown(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Obtiene el número de aplicaciones por modalidad de trabajo (Remote, Hybrid, On-site).
-    Utiliza SQL GROUP BY work_mode.
+    Calcula la distribución por modalidad de trabajo usando Pandas.
     """
     modalidades = {"Remote": 0, "Hybrid": 0, "On-site": 0}
-    query = """
-    SELECT work_mode, COUNT(*) 
-    FROM applications 
-    WHERE work_mode IS NOT NULL AND work_mode != ''
-    GROUP BY work_mode;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        for row in cursor.fetchall():
-            mode, count = row[0], row[1]
-            if mode in modalidades:
-                modalidades[mode] = count
-            else:
-                modalidades[mode or "Otro"] = count
-    return modalidades
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return modalidades
+
+    try:
+        df = pd.DataFrame(apps)
+        if "work_mode" in df.columns:
+            valid_wm = df["work_mode"].dropna().astype(str).str.strip()
+            valid_wm = valid_wm[valid_wm != ""]
+            counts = valid_wm.value_counts().to_dict()
+            for mode, cnt in counts.items():
+                if mode in modalidades:
+                    modalidades[mode] = int(cnt)
+                else:
+                    modalidades[mode or "Otro"] = int(cnt)
+        return modalidades
+    except Exception as e:
+        print(f"Error al calcular get_work_mode_breakdown con pandas: {e}")
+        return modalidades
 
 
-def get_salary_statistics() -> Dict[str, Any]:
+def get_salary_statistics(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, Any]:
     """
-    Calcula métricas salariales (mínimo, promedio, máximo y cantidad de registros válidos).
-    
-    Lógica de limpieza y cálculo:
-    - Extrae únicamente valores numéricos en USD (ignorando monedas locales como CRC o campos vacíos).
-    - Si una fila tiene un rango salarial (ej. '4500-5000 USD'), calcula el punto medio del rango.
-    - Ignora valores no numéricos ('TBD', vacíos) para no alterar el promedio.
+    Calcula estadísticas salariales en USD (min, avg, max, count) usando Pandas.
     """
-    query = "SELECT salary FROM applications WHERE salary IS NOT NULL AND salary != '';"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
+    default = {"min": 0.0, "avg": 0.0, "max": 0.0, "count": 0}
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return default
 
-    salarios_validos = []
-    non_usd_codes = ["CRC", "EUR", "GBP", "CAD", "MXN", "GTQ", "HNL", "NIO", "PAB", "DOP", "BRL", "COP", "ARS", "CLP", "PEN", "UYU", "BOB", "PYG", "VES", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN", "ISK", "TRY"]
-    for row in rows:
-        val = str(row[0])
-        val_upper = val.upper()
-        # Ignoramos monedas explícitamente no USD para no mezclar unidades (ej. CRC, EUR, etc.)
-        if any(c in val_upper for c in non_usd_codes):
-            continue
-        # Buscamos números mayores o iguales a 500 para evitar números de versión o ruido
-        nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", val.replace(",", "")) if float(n) >= 500]
-        if nums:
-            # Promedio del rango o el valor individual
-            salarios_validos.append(sum(nums) / len(nums))
+    try:
+        df = pd.DataFrame(apps)
+        if "salary" not in df.columns:
+            return default
 
-    if not salarios_validos:
-        return {"min": 0.0, "avg": 0.0, "max": 0.0, "count": 0}
+        valid_salaries = df["salary"].dropna().astype(str).str.strip()
+        valid_salaries = valid_salaries[valid_salaries != ""]
+        if valid_salaries.empty:
+            return default
 
-    return {
-        "min": round(min(salarios_validos), 2),
-        "avg": round(sum(salarios_validos) / len(salarios_validos), 2),
-        "max": round(max(salarios_validos), 2),
-        "count": len(salarios_validos)
-    }
+        salarios_validos = []
+        non_usd_codes = ["CRC", "EUR", "GBP", "CAD", "MXN", "GTQ", "HNL", "NIO", "PAB", "DOP", "BRL", "COP", "ARS", "CLP", "PEN", "UYU", "BOB", "PYG", "VES", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN", "ISK", "TRY"]
 
+        for val in valid_salaries:
+            val_upper = val.upper()
+            if any(c in val_upper for c in non_usd_codes):
+                continue
+            nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", val.replace(",", "")) if float(n) >= 500]
+            if nums:
+                salarios_validos.append(sum(nums) / len(nums))
 
-def get_monthly_applications() -> List[Dict[str, Any]]:
-    """
-    Obtiene la cantidad de postulaciones agrupadas cronológicamente por mes (YYYY-MM).
-    
-    CONCEPTO SQL:
-    Usa la función substr(application_date, 1, 7) para extraer el año y mes ('2026-04'),
-    agrupa por esa fecha truncada con GROUP BY y ordena cronológicamente con ORDER BY.
-    """
-    query = """
-    SELECT substr(application_date, 1, 7) as mes, COUNT(*) as total
-    FROM applications 
-    WHERE application_date IS NOT NULL AND application_date != ''
-    GROUP BY mes
-    ORDER BY mes ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [{"mes": row[0], "total": row[1]} for row in cursor.fetchall()]
+        if not salarios_validos:
+            return default
+
+        sal_series = pd.Series(salarios_validos)
+        return {
+            "min": round(float(sal_series.min()), 2),
+            "avg": round(float(sal_series.mean()), 2),
+            "max": round(float(sal_series.max()), 2),
+            "count": int(sal_series.count())
+        }
+    except Exception as e:
+        print(f"Error al calcular get_salary_statistics con pandas: {e}")
+        return default
 
 
-def get_monthly_interviews() -> List[Dict[str, Any]]:
+def get_monthly_applications(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene la cantidad de entrevistas agrupadas por mes.
-    Aproximación definida en la Fase 4: utiliza application_date como proxy
-    para aplicaciones cuyo estado es una entrevista ('Recruiter Screen',
-    'Technical Interview', 'Final Interview').
+    Calcula la cantidad de postulaciones agrupadas cronológicamente por mes (YYYY-MM) usando Pandas.
     """
-    query = """
-    SELECT substr(application_date, 1, 7) as mes, COUNT(*) as total
-    FROM applications 
-    WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview')
-      AND application_date IS NOT NULL AND application_date != ''
-    GROUP BY mes
-    ORDER BY mes ASC;
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return []
+
+    try:
+        df = pd.DataFrame(apps)
+        if "application_date" not in df.columns:
+            return []
+
+        valid_dates = df["application_date"].dropna().astype(str).str.strip()
+        valid_dates = valid_dates[valid_dates != ""]
+        if valid_dates.empty:
+            return []
+
+        months = valid_dates.str.slice(0, 7)
+        months = months[months.str.len() == 7]
+        if months.empty:
+            return []
+
+        monthly_counts = months.value_counts().sort_index()
+        return [{"mes": str(m), "total": int(cnt)} for m, cnt in monthly_counts.items()]
+    except Exception as e:
+        print(f"Error al calcular get_monthly_applications con pandas: {e}")
+        return []
+
+
+def get_monthly_interviews(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [{"mes": row[0], "total": row[1]} for row in cursor.fetchall()]
+    Calcula la cantidad de entrevistas agrupadas por mes usando Pandas.
+    """
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return []
+
+    try:
+        df = pd.DataFrame(apps)
+        if "application_date" not in df.columns or "status" not in df.columns:
+            return []
+
+        interview_statuses = ["Recruiter Screen", "Technical Interview", "Final Interview"]
+        df_interviews = df[df["status"].isin(interview_statuses)]
+        if df_interviews.empty:
+            return []
+
+        valid_dates = df_interviews["application_date"].dropna().astype(str).str.strip()
+        valid_dates = valid_dates[valid_dates != ""]
+        if valid_dates.empty:
+            return []
+
+        months = valid_dates.str.slice(0, 7)
+        months = months[months.str.len() == 7]
+        if months.empty:
+            return []
+
+        monthly_counts = months.value_counts().sort_index()
+        return [{"mes": str(m), "total": int(cnt)} for m, cnt in monthly_counts.items()]
+    except Exception as e:
+        print(f"Error al calcular get_monthly_interviews con pandas: {e}")
+        return []
 
 
 # ------------------------------------------------------------------------------
