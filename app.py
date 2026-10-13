@@ -935,26 +935,6 @@ st.sidebar.radio(
 )
 st.sidebar.divider()
 
-# Sincronización manual SQLite -> Supabase
-with st.sidebar.expander("☁️ Sincronización Nube", expanded=False):
-    st.caption("Respalda tus postulaciones de SQLite local a tu cuenta de Supabase.")
-    if st.button("🔄 Sincronizar SQLite a Supabase", key="btn_sync_sidebar", use_container_width=True):
-        if st.session_state.user:
-            prog_bar = st.progress(0.0)
-            status_txt = st.empty()
-            def cb_side(curr, tot, msg):
-                prog_bar.progress(curr / tot)
-                status_txt.caption(msg)
-            from sync_service import sync_sqlite_to_supabase
-            res_sync = sync_sqlite_to_supabase(supabase, st.session_state.user.id, progress_callback=cb_side)
-            status_txt.empty()
-            prog_bar.empty()
-            st.success(f"¡Sincronizado! {res_sync['inserted']} subidas, {res_sync['skipped']} omitidas.")
-            st.rerun()
-        else:
-            st.warning("Debes iniciar sesión para sincronizar.")
-
-st.sidebar.divider()
 
 # 2. Menú de navegación
 st.sidebar.title(t("nav_title"))

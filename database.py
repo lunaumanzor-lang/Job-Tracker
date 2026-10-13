@@ -6,31 +6,11 @@
 import os
 import re
 import hashlib
-import sqlite3
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Dict, Optional, Any
 import pandas as pd
 from cryptography.fernet import Fernet
 from supabase import Client
-
-# Directorio base del proyecto (donde reside este archivo .py)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Ruta absoluta de la base de datos local (mantenida temporalmente para scripts antiguos)
-DB_NAME = os.path.join(BASE_DIR, "job_tracker.db")
-
-
-
-# ------------------------------------------------------------------------------
-# CONEXIÓN Y CONFIGURACIÓN (SQLite Legacy)
-# ------------------------------------------------------------------------------
-def get_connection():
-    """
-    Crea y retorna una conexión a la base de datos SQLite (compatibilidad con scripts legacy).
-    """
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
 
 
 # ------------------------------------------------------------------------------
