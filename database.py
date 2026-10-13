@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 from typing import List, Dict, Optional, Any
+from supabase import Client
 
 # Directorio base del proyecto (donde reside este archivo .py)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -216,10 +217,7 @@ def create_tables():
         );
         """)
 
-        conn.commit()
-
-    # Sembrar datos de ejemplo si la tabla de experiencia está vacía
-    seed_default_resume_bullets()
+    conn.commit()
 
 
 # ------------------------------------------------------------------------------
@@ -733,9 +731,9 @@ def get_supabase_client():
         return None
 
 
-def get_current_user_id() -> Optional[str]:
+def get_current_user_id(client: Optional[Client] = None) -> Optional[str]:
     """
-    Obtiene el user_id del usuario autenticado en la sesión actual de Streamlit.
+    Obtiene el user_id del usuario autenticado en la sesión actual de Streamlit o del cliente Supabase.
     """
     try:
         import streamlit as st
@@ -746,6 +744,13 @@ def get_current_user_id() -> Optional[str]:
                 u_id = user.get("id")
             if u_id:
                 return str(u_id)
+        if client:
+            try:
+                res = client.auth.get_user()
+                if res and res.user:
+                    return str(res.user.id)
+            except Exception:
+                pass
     except Exception:
         pass
     return None
@@ -1137,122 +1142,29 @@ def delete_user_skill(
 # FASE 5.6a & 5.7: FUNCIONES PARA EXPERIENCIA, BULLETS Y EDUCACIÓN (CV BUILDER & RESUME PARSER)
 # ==============================================================================
 
-def seed_default_resume_bullets():
+def get_all_experiences(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Inserta experiencia, bullets y educación de ejemplo si experience_entries está vacía.
-    Permite probar el CV Builder de inmediato con datos realistas basados en el perfil del usuario.
+    Retorna todas las experiencias laborales registradas del usuario en Supabase,
+    ordenadas por order_index ascendente e id ascendente.
     """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM experience_entries;")
-            count = cursor.fetchone()[0]
-            if count == 0:
-                # 1. Experiencia 1
-                cursor.execute(
-                    """
-                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                    """,
-                    ("NTT Data / Citibank", "Unix L3 Senior Systems Administrator", "2021-06", None, 1, 1)
-                )
-                exp1_id = cursor.lastrowid
-
-                bullets_exp1 = [
-                    (
-                        exp1_id,
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        1
-                    ),
-                    (
-                        exp1_id,
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        2
-                    ),
-                    (
-                        exp1_id,
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        3
-                    )
-                ]
-                cursor.executemany(
-                    """
-                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    bullets_exp1
-                )
-
-                # 2. Experiencia 2
-                cursor.execute(
-                    """
-                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                    """,
-                    ("Experiencia Previa", "Senior Linux & Infrastructure Specialist", "2018-01", "2021-05", 0, 2)
-                )
-                exp2_id = cursor.lastrowid
-
-                bullets_exp2 = [
-                    (
-                        exp2_id,
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        1
-                    ),
-                    (
-                        exp2_id,
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        2
-                    )
-                ]
-                cursor.executemany(
-                    """
-                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    bullets_exp2
-                )
-
-                # 3. Educación de ejemplo
-                cursor.execute("SELECT COUNT(*) FROM education_entries;")
-                count_edu = cursor.fetchone()[0]
-                if count_edu == 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-                        VALUES (?, ?, ?, ?, ?);
-                        """,
-                        ("Universidad Técnica / Instituto Tecnológico", "Ingeniería en Sistemas / Computación", "2013-01", "2017-12", 1)
-                    )
-
-                conn.commit()
+        res = (
+            client.table("experience_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
     except Exception as e:
-        print(f"Aviso al sembrar resume_bullets: {e}")
-
-
-# ------------------------------------------------------------------------------
-# EXPERIENCIA LABORAL (experience_entries)
-# ------------------------------------------------------------------------------
-
-def get_all_experiences() -> List[Dict[str, Any]]:
-    """
-    Retorna todas las experiencias laborales registradas ordenadas por order_index e id.
-    """
-    query = "SELECT * FROM experience_entries ORDER BY order_index ASC, id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+        print(f"Error al obtener experiencias en Supabase: {e}")
+        return []
 
 
 def add_experience_entry(
@@ -1261,23 +1173,36 @@ def add_experience_entry(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     is_current: bool = False,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta una nueva experiencia laboral estructurada y retorna su ID generado.
+    Inserta una nueva experiencia laboral estructurada en Supabase y retorna su ID generado.
     """
-    query = """
-    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-    VALUES (?, ?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            query,
-            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, order_index)
-        )
-        conn.commit()
-        return cursor.lastrowid or 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_experience_entry: no hay cliente o usuario autenticado")
+        return 0
+
+    payload = {
+        "user_id": uid,
+        "company": company.strip(),
+        "position": position.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_current": bool(is_current),
+        "order_index": order_index
+    }
+    try:
+        res = client.table("experience_entries").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar experiencia laboral en Supabase: {e}")
+        return 0
 
 
 def update_experience_entry(
@@ -1286,86 +1211,163 @@ def update_experience_entry(
     position: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    is_current: bool = False
+    is_current: bool = False,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza los datos de una experiencia laboral.
+    Actualiza los datos de una experiencia laboral en Supabase, acotado al usuario activo.
     """
-    query = """
-    UPDATE experience_entries
-    SET company = ?, position = ?, start_date = ?, end_date = ?, is_current = ?
-    WHERE id = ?;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            query,
-            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, experience_id)
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_experience_entry: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "company": company.strip(),
+        "position": position.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_current": bool(is_current)
+    }
+    try:
+        res = (
+            client.table("experience_entries")
+            .update(payload)
+            .eq("id", experience_id)
+            .eq("user_id", uid)
+            .execute()
         )
-        conn.commit()
-        return cursor.rowcount > 0
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar experiencia laboral en Supabase: {e}")
+        return False
 
 
-def delete_experience_entry(experience_id: int) -> bool:
+def delete_experience_entry(
+    experience_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina una experiencia laboral y en cascada todos sus bullets asociados.
+    Elimina una experiencia laboral y en cascada todos sus bullets asociados en Supabase,
+    acotado al usuario activo.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON;")
-        cursor.execute("DELETE FROM resume_bullets WHERE experience_id = ?;", (experience_id,))
-        cursor.execute("DELETE FROM experience_entries WHERE id = ?;", (experience_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_experience_entry: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        client.table("resume_bullets").delete().eq("experience_id", experience_id).eq("user_id", uid).execute()
+        res = client.table("experience_entries").delete().eq("id", experience_id).eq("user_id", uid).execute()
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar experiencia laboral en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
 # BULLETS DE LOGROS (resume_bullets)
 # ------------------------------------------------------------------------------
 
-def get_all_resume_bullets() -> List[Dict[str, Any]]:
+def get_all_resume_bullets(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todos los bullets del CV ordenados por la experiencia correspondiente y order_index.
+    Obtiene todos los bullets del CV en Supabase ordenados por la experiencia correspondiente y order_index.
     Para compatibilidad hacia atrás y soporte del CV Builder, sintetiza el campo 'section'
     como 'position - company' e incluye company, position y fechas.
     """
-    query = """
-    SELECT 
-        b.id,
-        b.experience_id,
-        (e.position || ' - ' || e.company) AS section,
-        e.company,
-        e.position,
-        e.start_date,
-        e.end_date,
-        e.is_current,
-        b.bullet_text,
-        b.original_text,
-        b.current_text,
-        b.order_index
-    FROM resume_bullets b
-    JOIN experience_entries e ON b.experience_id = e.id
-    ORDER BY e.order_index ASC, e.id ASC, b.order_index ASC, b.id ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        exps = (
+            client.table("experience_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+            .data or []
+        )
+        if not exps:
+            return []
+
+        bullets = (
+            client.table("resume_bullets")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+            .data or []
+        )
+
+        exp_map = {e["id"]: e for e in exps}
+        joined_results = []
+        for b in bullets:
+            exp = exp_map.get(b.get("experience_id"))
+            if exp:
+                pos = exp.get("position") or ""
+                comp = exp.get("company") or ""
+                joined_results.append({
+                    "id": b.get("id"),
+                    "experience_id": b.get("experience_id"),
+                    "section": f"{pos} - {comp}".strip(" -"),
+                    "company": comp,
+                    "position": pos,
+                    "start_date": exp.get("start_date"),
+                    "end_date": exp.get("end_date"),
+                    "is_current": exp.get("is_current"),
+                    "bullet_text": b.get("bullet_text"),
+                    "original_text": b.get("original_text"),
+                    "current_text": b.get("current_text"),
+                    "order_index": b.get("order_index", 0),
+                    "_exp_order": exp.get("order_index", 0),
+                    "_exp_id": exp.get("id", 0)
+                })
+
+        joined_results.sort(key=lambda x: (x["_exp_order"], x["_exp_id"], x["order_index"], x["id"]))
+        for r in joined_results:
+            r.pop("_exp_order", None)
+            r.pop("_exp_id", None)
+        return joined_results
+    except Exception as e:
+        print(f"Error al obtener todos los resume bullets en Supabase: {e}")
+        return []
 
 
-def get_bullets_by_experience(experience_id: int) -> List[Dict[str, Any]]:
+def get_bullets_by_experience(
+    experience_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene los bullets de una experiencia específica.
+    Obtiene los bullets de una experiencia específica en Supabase, acotado al usuario activo.
     """
-    query = """
-    SELECT * FROM resume_bullets
-    WHERE experience_id = ?
-    ORDER BY order_index ASC, id ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (experience_id,))
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        res = (
+            client.table("resume_bullets")
+            .select("*")
+            .eq("experience_id", experience_id)
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener bullets de experiencia en Supabase: {e}")
+        return []
 
 
 def add_resume_bullet(
@@ -1373,62 +1375,128 @@ def add_resume_bullet(
     bullet_text: str,
     original_text: Optional[str] = None,
     current_text: Optional[str] = None,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta un nuevo bullet asociado a una experiencia laboral.
+    Inserta un nuevo bullet asociado a una experiencia laboral en Supabase y retorna su ID.
     """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_resume_bullet: no hay cliente o usuario autenticado")
+        return 0
+
     b_txt = bullet_text.strip()
     orig = (original_text or b_txt).strip()
     curr = (current_text or b_txt).strip()
-    query = """
-    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-    VALUES (?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (experience_id, b_txt, orig, curr, order_index))
-        conn.commit()
-        return cursor.lastrowid or 0
+    payload = {
+        "user_id": uid,
+        "experience_id": experience_id,
+        "bullet_text": b_txt,
+        "original_text": orig,
+        "current_text": curr,
+        "order_index": order_index
+    }
+    try:
+        res = client.table("resume_bullets").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar resume bullet en Supabase: {e}")
+        return 0
 
 
-def update_resume_bullet(bullet_id: int, current_text: str) -> bool:
+def update_resume_bullet(
+    bullet_id: int,
+    current_text: str,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Actualiza el texto actual (current_text) de un bullet específico tras ser aceptado por el usuario.
+    Actualiza el texto actual (current_text y bullet_text) de un bullet en Supabase, acotado al usuario.
     """
-    query = "UPDATE resume_bullets SET current_text = ?, bullet_text = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (current_text.strip(), current_text.strip(), bullet_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_resume_bullet: no hay cliente o usuario autenticado")
+        return False
+
+    clean_text = current_text.strip()
+    payload = {
+        "current_text": clean_text,
+        "bullet_text": clean_text
+    }
+    try:
+        res = (
+            client.table("resume_bullets")
+            .update(payload)
+            .eq("id", bullet_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar resume bullet en Supabase: {e}")
+        return False
 
 
-def delete_resume_bullet(bullet_id: int) -> bool:
+def delete_resume_bullet(
+    bullet_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina un bullet del CV por su ID.
+    Elimina un bullet del CV por su ID en Supabase, acotado al usuario.
     """
-    query = "DELETE FROM resume_bullets WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (bullet_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_resume_bullet: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("resume_bullets")
+            .delete()
+            .eq("id", bullet_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar resume bullet en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
 # EDUCACIÓN Y CERTIFICACIONES (education_entries)
 # ------------------------------------------------------------------------------
 
-def get_all_education() -> List[Dict[str, Any]]:
+def get_all_education(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todos los registros de educación y certificaciones.
+    Obtiene todos los registros de educación y certificaciones en Supabase para el usuario activo.
     """
-    query = "SELECT * FROM education_entries ORDER BY order_index ASC, id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        res = (
+            client.table("education_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener educación en Supabase: {e}")
+        return []
 
 
 def add_education_entry(
@@ -1436,20 +1504,35 @@ def add_education_entry(
     credential: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta un registro de educación o certificación.
+    Inserta un registro de educación o certificación en Supabase para el usuario activo y retorna su ID.
     """
-    query = """
-    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-    VALUES (?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, order_index))
-        conn.commit()
-        return cursor.lastrowid or 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_education_entry: no hay cliente o usuario autenticado")
+        return 0
+
+    payload = {
+        "user_id": uid,
+        "institution": institution.strip(),
+        "credential": credential.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "order_index": order_index
+    }
+    try:
+        res = client.table("education_entries").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar educación en Supabase: {e}")
+        return 0
 
 
 def update_education_entry(
@@ -1457,33 +1540,65 @@ def update_education_entry(
     institution: str,
     credential: str,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza un registro de educación.
+    Actualiza un registro de educación en Supabase acotado al usuario activo.
     """
-    query = """
-    UPDATE education_entries
-    SET institution = ?, credential = ?, start_date = ?, end_date = ?
-    WHERE id = ?;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, education_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_education_entry: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "institution": institution.strip(),
+        "credential": credential.strip(),
+        "start_date": start_date,
+        "end_date": end_date
+    }
+    try:
+        res = (
+            client.table("education_entries")
+            .update(payload)
+            .eq("id", education_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar educación en Supabase: {e}")
+        return False
 
 
-def delete_education_entry(education_id: int) -> bool:
+def delete_education_entry(
+    education_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina un registro de educación por su ID.
+    Elimina un registro de educación en Supabase por su ID, acotado al usuario activo.
     """
-    query = "DELETE FROM education_entries WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (education_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_education_entry: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("education_entries")
+            .delete()
+            .eq("id", education_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar educación en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
@@ -1493,50 +1608,80 @@ def delete_education_entry(education_id: int) -> bool:
 def save_parsed_resume_data(
     experience_list: List[Dict[str, Any]],
     education_list: List[Dict[str, Any]],
-    replace_existing: bool = True
+    replace_existing: bool = True,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Persiste en una sola transacción limpia los datos de experiencia laboral,
-    sus bullets asociados y la educación extraída y confirmada por el usuario.
+    Persiste en Supabase los datos de experiencia laboral, sus bullets asociados y la
+    educación extraída y confirmada por el usuario.
+    Regla: Inserta primero lo nuevo y borra lo viejo solo si todas las inserciones
+    fueron exitosas, siempre acotado al user_id activo. Si falla, hace rollback de lo
+    recién insertado y conserva lo viejo.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        if replace_existing:
-            cursor.execute("DELETE FROM resume_bullets;")
-            cursor.execute("DELETE FROM experience_entries;")
-            cursor.execute("DELETE FROM education_entries;")
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en save_parsed_resume_data: no hay cliente o usuario autenticado")
+        return False
 
-        # Inserción de experiencia y bullets
+    inserted_exp_ids: List[int] = []
+    inserted_bullet_ids: List[int] = []
+    inserted_edu_ids: List[int] = []
+
+    try:
+        # 1. Si se va a reemplazar lo existente, identificamos los IDs anteriores para borrarlos al final
+        old_exp_ids: List[int] = []
+        old_edu_ids: List[int] = []
+        if replace_existing:
+            old_exp_res = client.table("experience_entries").select("id").eq("user_id", uid).execute()
+            old_exp_ids = [row["id"] for row in (old_exp_res.data or []) if "id" in row]
+
+            old_edu_res = client.table("education_entries").select("id").eq("user_id", uid).execute()
+            old_edu_ids = [row["id"] for row in (old_edu_res.data or []) if "id" in row]
+
+        # 2. Inserción de nuevas experiencias y sus viñetas
         for idx_exp, exp in enumerate(experience_list, start=1):
             comp = str(exp.get("company", "Empresa")).strip()
             pos = str(exp.get("position", "Puesto")).strip()
             s_date = exp.get("start_date")
             e_date = exp.get("end_date")
-            is_cur = 1 if exp.get("is_current") else 0
+            is_cur = bool(exp.get("is_current"))
             order_idx = exp.get("order_index", idx_exp)
 
-            cursor.execute(
-                """
-                INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                VALUES (?, ?, ?, ?, ?, ?);
-                """,
-                (comp, pos, s_date, e_date, is_cur, order_idx)
-            )
-            exp_id = cursor.lastrowid
+            exp_payload = {
+                "user_id": uid,
+                "company": comp,
+                "position": pos,
+                "start_date": s_date,
+                "end_date": e_date,
+                "is_current": is_cur,
+                "order_index": order_idx
+            }
+            exp_res = client.table("experience_entries").insert(exp_payload).execute()
+            if not exp_res.data or len(exp_res.data) == 0:
+                raise RuntimeError(f"Fallo al insertar experiencia: {comp} - {pos}")
+
+            new_exp_id = exp_res.data[0]["id"]
+            inserted_exp_ids.append(new_exp_id)
 
             bullets = exp.get("bullets", [])
             for idx_b, b_text in enumerate(bullets, start=1):
                 clean_b = str(b_text).strip()
                 if clean_b:
-                    cursor.execute(
-                        """
-                        INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                        VALUES (?, ?, ?, ?, ?);
-                        """,
-                        (exp_id, clean_b, clean_b, clean_b, idx_b)
-                    )
+                    b_payload = {
+                        "user_id": uid,
+                        "experience_id": new_exp_id,
+                        "bullet_text": clean_b,
+                        "original_text": clean_b,
+                        "current_text": clean_b,
+                        "order_index": idx_b
+                    }
+                    b_res = client.table("resume_bullets").insert(b_payload).execute()
+                    if b_res.data and len(b_res.data) > 0:
+                        inserted_bullet_ids.append(b_res.data[0]["id"])
 
-        # Inserción de educación
+        # 3. Inserción de nueva educación
         for idx_edu, edu in enumerate(education_list, start=1):
             inst = str(edu.get("institution", "Institución")).strip()
             cred = str(edu.get("credential", "Título / Certificación")).strip()
@@ -1545,16 +1690,125 @@ def save_parsed_resume_data(
             order_idx = edu.get("order_index", idx_edu)
 
             if inst or cred:
-                cursor.execute(
-                    """
-                    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    (inst, cred, s_date, e_date, order_idx)
-                )
+                edu_payload = {
+                    "user_id": uid,
+                    "institution": inst,
+                    "credential": cred,
+                    "start_date": s_date,
+                    "end_date": e_date,
+                    "order_index": order_idx
+                }
+                edu_res = client.table("education_entries").insert(edu_payload).execute()
+                if not edu_res.data or len(edu_res.data) == 0:
+                    raise RuntimeError(f"Fallo al insertar educación: {inst} - {cred}")
+                inserted_edu_ids.append(edu_res.data[0]["id"])
 
-        conn.commit()
+        # 4. Todo salió bien: si replace_existing es True, borramos lo viejo acotado a user_id
+        if replace_existing:
+            if old_exp_ids:
+                client.table("resume_bullets").delete().eq("user_id", uid).in_("experience_id", old_exp_ids).execute()
+                client.table("experience_entries").delete().eq("user_id", uid).in_("id", old_exp_ids).execute()
+            if old_edu_ids:
+                client.table("education_entries").delete().eq("user_id", uid).in_("id", old_edu_ids).execute()
+
         return True
+
+    except Exception as e:
+        print(f"Error en save_parsed_resume_data: {e}")
+        # Rollback de lo recién insertado para no dejar datos corruptos o duplicados
+        try:
+            if inserted_bullet_ids:
+                client.table("resume_bullets").delete().eq("user_id", uid).in_("id", inserted_bullet_ids).execute()
+            if inserted_exp_ids:
+                client.table("experience_entries").delete().eq("user_id", uid).in_("id", inserted_exp_ids).execute()
+            if inserted_edu_ids:
+                client.table("education_entries").delete().eq("user_id", uid).in_("id", inserted_edu_ids).execute()
+        except Exception as rb_err:
+            print(f"Error durante rollback de inserción: {rb_err}")
+        return False
+
+
+# ------------------------------------------------------------------------------
+# BORRADOR DE TRABAJO DE CV IMPROVER (cv_improver_drafts)
+# ------------------------------------------------------------------------------
+
+def save_cv_improver_draft(
+    draft_data: Dict[str, Any],
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
+    """
+    Guarda o actualiza el borrador de trabajo en curso del usuario para Mejorar CV en Supabase.
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en save_cv_improver_draft: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "user_id": uid,
+        "draft_data": draft_data
+    }
+    try:
+        res = (
+            client.table("cv_improver_drafts")
+            .upsert(payload, on_conflict="user_id")
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al guardar borrador de CV Improver en Supabase: {e}")
+        return False
+
+
+def get_cv_improver_draft(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene el borrador de trabajo en curso del usuario para Mejorar CV desde Supabase.
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return None
+
+    try:
+        res = (
+            client.table("cv_improver_drafts")
+            .select("draft_data")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if res.data and "draft_data" in res.data:
+            return res.data["draft_data"]
+        return None
+    except Exception as e:
+        print(f"Error al obtener borrador de CV Improver en Supabase: {e}")
+        return None
+
+
+def delete_cv_improver_draft(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
+    """
+    Elimina el borrador de trabajo de Mejorar CV del usuario en Supabase.
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return False
+
+    try:
+        client.table("cv_improver_drafts").delete().eq("user_id", uid).execute()
+        return True
+    except Exception as e:
+        print(f"Error al eliminar borrador de CV Improver en Supabase: {e}")
+        return False
+
 
 
 

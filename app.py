@@ -56,7 +56,6 @@ from database import (
     add_resume_bullet,
     update_resume_bullet,
     delete_resume_bullet,
-    seed_default_resume_bullets,
     get_all_education,
     add_education_entry,
     update_education_entry,
@@ -1444,11 +1443,13 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                     )
                     if skills_rev:
                         add_user_skills_bulk(skills_rev, source="Resume")
-                    save_parsed_resume_data(reviewed_experiences, reviewed_education, replace_existing=True)
-
-                    del st.session_state["pending_resume_review"]
-                    st.toast(t("profile_review_saved_toast"), icon="🎉")
-                    st.rerun()
+                    ok_parsed = save_parsed_resume_data(reviewed_experiences, reviewed_education, replace_existing=True)
+                    if ok_parsed:
+                        del st.session_state["pending_resume_review"]
+                        st.toast(t("profile_review_saved_toast"), icon="🎉")
+                        st.rerun()
+                    else:
+                        st.error("Error al guardar la experiencia y educación en la base de datos.")
 
             with col_disc_btn:
                 if st.button(t("profile_review_btn_discard"), use_container_width=True, key="btn_discard_review"):
