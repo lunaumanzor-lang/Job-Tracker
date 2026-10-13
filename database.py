@@ -199,7 +199,9 @@ def insert_application(
         err_msg = str(e)
         if "applications_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
             try:
-                res_max = client.table("applications").select("id").order("id", desc=True).limit(1).execute()
+                admin = _get_service_role_client()
+                target_client = admin if admin else client
+                res_max = target_client.table("applications").select("id").order("id", desc=True).limit(1).execute()
                 max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
                 payload_fallback = dict(payload)
                 payload_fallback["id"] = max_id + 1
@@ -251,7 +253,9 @@ def insert_application_skills(
         err_msg = str(e)
         if "skills_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
             try:
-                res_max = client.table("skills").select("id").order("id", desc=True).limit(1).execute()
+                admin = _get_service_role_client()
+                target_client = admin if admin else client
+                res_max = target_client.table("skills").select("id").order("id", desc=True).limit(1).execute()
                 max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
                 filas_fallback = []
                 for idx, f in enumerate(filas, start=1):

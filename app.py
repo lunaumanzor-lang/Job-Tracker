@@ -999,6 +999,19 @@ menu_opcion = st.sidebar.radio(
 )
 
 
+
+def get_user_application_number_map(applications: list) -> dict:
+    """
+    Calcula un mapa {id_real: numero_visible} ordenando las postulaciones
+    del usuario por id ascendente (1, 2, 3...).
+    Solo se utiliza para visualización en la interfaz de usuario.
+    """
+    if not applications:
+        return {}
+    ordenadas = sorted(applications, key=lambda x: (x.get("id") or 0))
+    return {app["id"]: idx for idx, app in enumerate(ordenadas, start=1)}
+
+
 # ==============================================================================
 # PÁGINA 0: DASHBOARD (Vista Rápida: Conteos Clave y Pipeline)
 # ==============================================================================
@@ -1671,11 +1684,13 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
         if not apps_para_dropdown:
             st.info("ℹ️ No hay aplicaciones registradas todavía. Puedes ingresar una URL o texto manualmente." if st.session_state.get("lang") == "es" else "ℹ️ No registered applications yet. You can enter a URL or text manually.")
         else:
-            # Mapeo de aplicaciones para el dropdown
+            id_map_analyzer = get_user_application_number_map(apps_para_dropdown)
+            # Mapeo de aplicaciones para el dropdown con número visible correlativo
             mapa_apps = {}
             for a in apps_para_dropdown:
                 url_ind = ("🔗 Con enlace" if a.get("job_url") else "📄 Sin enlace") if st.session_state.get("lang") == "es" else ("🔗 With URL" if a.get("job_url") else "📄 Without URL")
-                etiqueta = f"#{a['id']} - {a.get('company', 'Empresa')} | {a.get('position', 'Puesto')} ({url_ind})"
+                disp_num = id_map_analyzer.get(a['id'], a['id'])
+                etiqueta = f"#{disp_num:02d} - {a.get('company', 'Empresa')} | {a.get('position', 'Puesto')} ({url_ind})"
                 mapa_apps[etiqueta] = a
 
             placeholder_app = t("analyzer_select_app_placeholder")
@@ -1995,7 +2010,12 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
                         total_guardadas = insert_application_skills(nuevo_id, skills_a_guardar)
                         st.caption(t("analyzer_skills_linked", count=total_guardadas))
 
-                    st.success(t("analyzer_app_saved_success", company=company_val, id=nuevo_id))
+                    # Calcular número visible para el usuario (Opción A)
+                    todas_apps_ahora = get_all_applications()
+                    id_map_guardado = get_user_application_number_map(todas_apps_ahora)
+                    num_visible = id_map_guardado.get(nuevo_id, len(todas_apps_ahora) or 1)
+
+                    st.success(t("analyzer_app_saved_success", company=company_val, id=num_visible))
                     st.balloons()
 
 
@@ -2009,8 +2029,11 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
     if not todas_las_apps:
         st.info("No hay aplicaciones registradas todavía. Ve a la pestaña '➕ Agregar Nueva Aplicación' para crear la primera." if st.session_state.get("lang") == "es" else "No applications registered yet. Go to '➕ Add New Application' to create the first one.")
     else:
+        id_map_view = get_user_application_number_map(todas_las_apps)
         # Convertimos la lista de diccionarios a un DataFrame de pandas para facilitar búsquedas y filtros
         df = pd.DataFrame(todas_las_apps)
+        if "id" in df.columns:
+            df["#"] = df["id"].map(id_map_view)
 
         # ----------------------------------------------------------------------
         # BÚSQUEDA Y FILTROS (Requisito 6)
@@ -2055,7 +2078,7 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
         # ----------------------------------------------------------------------
         # TABLA DE APLICACIONES (Requisito 2)
         # ----------------------------------------------------------------------
-        columnas_tabla = ["id", "company", "position", "status", "work_mode", "salary", "application_date"]
+        columnas_tabla = ["#", "company", "position", "status", "work_mode", "salary", "application_date"]
         # Filtramos solo columnas existentes por seguridad
         cols_mostrar = [c for c in columnas_tabla if c in df_filtrado.columns]
 
@@ -2072,9 +2095,9 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
         # ----------------------------------------------------------------------
         st.subheader(t("view_apps_manage_section"))
 
-        # Creamos una lista de opciones claras para el selectbox: "[ID] Empresa - Puesto"
+        # Mapa interno {numero_visible_label: id_real} para selectbox: "[#n] Empresa - Puesto"
         opciones_apps = {
-            f"#{row['id']:02d} | {row['company']} — {row['position']} ({t_status(row['status'])})": row['id']
+            f"#{id_map_view.get(row['id'], row['id']):02d} | {row['company']} — {row['position']} ({t_status(row['status'])})": row['id']
             for _, row in df_filtrado.iterrows()
         }
 
@@ -2160,10 +2183,11 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                         
                         if st.button(t("app_detail_delete_btn"), type="primary", disabled=not confirmar_borrado):
                             id_a_borrar = app_actual["id"]
-                            with st.spinner(t("app_detail_delete_spinner", id=id_a_borrar)):
+                            num_vis_borrar = id_map_view.get(id_a_borrar, id_a_borrar)
+                            with st.spinner(t("app_detail_delete_spinner", id=num_vis_borrar)):
                                 ok = delete_application(id_a_borrar)
                                 if ok:
-                                    st.success(t("app_detail_delete_success", id=id_a_borrar))
+                                    st.success(t("app_detail_delete_success", id=num_vis_borrar))
                                     st.rerun()
                                 else:
                                     st.error(t("app_detail_delete_err_supabase", error="No se pudo eliminar la postulación."))
@@ -2526,7 +2550,12 @@ elif menu_opcion in ("add_app", "➕ Agregar Nueva Aplicación"):
                     st.session_state.pop(k, None)
                 st.session_state["add_app_ver"] = form_ver + 1
 
-                st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito en la nube con ID #{nuevo_id}!")
+                # Calcular número visible para el usuario (Opción A)
+                apps_actualizadas = get_all_applications()
+                id_map_manual = get_user_application_number_map(apps_actualizadas)
+                num_vis_manual = id_map_manual.get(nuevo_id, len(apps_actualizadas) or 1)
+
+                st.success(f"🎉 ¡Aplicación a **{company}** guardada con éxito como postulación #{num_vis_manual}!")
             else:
                 st.error("⚠️ No se pudo guardar la postulación en la base de datos.")
 
@@ -2544,11 +2573,13 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
     if not todas_las_apps:
         st.info(t("coach_no_apps_available"))
     else:
-        # Selector de aplicación: dropdown que muestra "Company - Position"
-        opciones_etiquetas = [
-            f"#{app_item['id']} — {app_item['company']} ({app_item['position']})"
+        id_map_coach = get_user_application_number_map(todas_las_apps)
+        # Mapa interno {etiqueta_visible: app_dict}
+        mapa_coach = {
+            f"#{id_map_coach.get(app_item['id'], app_item['id']):02d} — {app_item['company']} ({app_item['position']})": app_item
             for app_item in todas_las_apps
-        ]
+        }
+        opciones_etiquetas = list(mapa_coach.keys())
 
         # Recuperar índice previo si existe
         idx_default = 0
@@ -2565,7 +2596,7 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
             key="sb_coach_app_selector"
         )
 
-        app_elegida = todas_las_apps[opciones_etiquetas.index(seleccion_str)]
+        app_elegida = mapa_coach[seleccion_str]
         st.session_state["coach_menu_selected_id"] = app_elegida["id"]
 
         # Renderizamos el coach reutilizando la función compartida sin duplicar código
