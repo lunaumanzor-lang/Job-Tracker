@@ -1502,14 +1502,17 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
             elif input_cat == t("profile_new_category_option") and not (nueva_cat_personalizada and nueva_cat_personalizada.strip()):
                 st.error(t("profile_err_empty_category"))
             else:
-                add_user_skill(
+                ok = add_user_skill(
                     skill_name=input_skill.strip(),
                     category=cat_final,
                     source="Manual",
                     proficiency=input_prof
                 )
-                st.success(t("profile_msg_skill_saved", skill=input_skill.strip(), category=cat_final))
-                st.rerun()
+                if ok:
+                    st.success(t("profile_msg_skill_saved", skill=input_skill.strip(), category=cat_final))
+                    st.rerun()
+                else:
+                    st.error("Error al guardar la habilidad en Supabase.")
 
     # Despliegue de skills existentes
     if not todas_las_skills:
@@ -1545,11 +1548,18 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                         cat_actual = item.get("category", "DevOps")
                         opciones_fila = [t("profile_new_category_option")] + categorias_disponibles
                         idx_cat = opciones_fila.index(cat_actual) if cat_actual in opciones_fila else 1
+
+                        def on_change_cat(sk_id=item["id"]):
+                            val = st.session_state.get(f"cat_{sk_id}")
+                            if val and val != t("profile_new_category_option"):
+                                update_user_skill_category(sk_id, val)
+
                         nueva_cat = st.selectbox(
                             t("profile_category_label"),
                             options=opciones_fila,
                             index=idx_cat,
                             key=f"cat_{item['id']}",
+                            on_change=on_change_cat,
                             label_visibility="collapsed"
                         )
                         if nueva_cat == t("profile_new_category_option"):
@@ -1568,24 +1578,25 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                                         st.rerun()
                                     else:
                                         st.warning(t("profile_warn_type_name"))
-                        elif nueva_cat != cat_actual:
-                            update_user_skill_category(item["id"], nueva_cat)
-                            st.rerun()
-                    
+
                     with c_prof:
                         # Dropdown para cambiar el nivel de proficiency
                         prof_actual = item.get("proficiency", "Intermediate")
                         idx_prof = PROFICIENCY_LEVELS.index(prof_actual) if prof_actual in PROFICIENCY_LEVELS else 1
-                        nuevo_nivel = st.selectbox(
+
+                        def on_change_prof(sk_id=item["id"]):
+                            val = st.session_state.get(f"prof_{sk_id}")
+                            if val:
+                                update_user_skill_proficiency(sk_id, val)
+
+                        st.selectbox(
                             t("profile_field_proficiency"),
                             options=PROFICIENCY_LEVELS,
                             index=idx_prof,
                             key=f"prof_{item['id']}",
+                            on_change=on_change_prof,
                             label_visibility="collapsed"
                         )
-                        if nuevo_nivel != prof_actual:
-                            update_user_skill_proficiency(item["id"], nuevo_nivel)
-                            st.rerun()
 
                     with c_del:
                         if st.button("🗑️", key=f"del_sk_{item['id']}", help=t("profile_help_delete_skill", skill=item['skill_name'])):

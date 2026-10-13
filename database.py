@@ -296,20 +296,32 @@ PROFICIENCY_LEVELS = [
 ]
 
 
-def get_all_distinct_categories() -> List[str]:
+def get_all_distinct_categories(user_id: Optional[str] = None, client: Any = None) -> List[str]:
     """
     Retorna la lista unificada y ordenada de categorías:
     las predeterminadas en SKILL_CATEGORIES más cualquier categoría personalizada
-    creada o registrada en la base de datos SQLite.
+    creada o registrada por el usuario en Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
     categorias = set(SKILL_CATEGORIES)
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return sorted(list(categorias))
+    sb = client or get_supabase_client()
+    if not sb:
+        return sorted(list(categorias))
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT category FROM user_skills WHERE category IS NOT NULL AND category != '';")
-            for row in cursor.fetchall():
-                if row[0]:
-                    categorias.add(row[0].strip())
+        response = (
+            sb.table("user_skills")
+            .select("category")
+            .eq("user_id", uid)
+            .execute()
+        )
+        if response and response.data:
+            for row in response.data:
+                cat = row.get("category")
+                if cat and str(cat).strip():
+                    categorias.add(str(cat).strip())
     except Exception:
         pass
     return sorted(list(categorias))
@@ -894,99 +906,231 @@ def add_user_skill(
     skill_name: str,
     category: str,
     source: str = "Manual",
-    proficiency: str = "Intermediate"
+    proficiency: str = "Intermediate",
+    user_id: Optional[str] = None,
+    client: Any = None
 ) -> bool:
     """
-    Agrega o actualiza una habilidad en el inventario del usuario.
-    Usa ON CONFLICT(skill_name) para actualizar la categoría y proficiency sin duplicar.
+    Agrega o actualiza una habilidad en el inventario del usuario en Supabase.
+    Compara en Python con .strip().lower() para evitar duplicados y actualizar
+    el nivel sin importar mayúsculas o minúsculas.
     """
-    query = """
-    INSERT INTO user_skills (skill_name, category, source, proficiency, date_added)
-    VALUES (?, ?, ?, ?, date('now'))
-    ON CONFLICT(skill_name) DO UPDATE SET
-        category = excluded.category,
-        proficiency = excluded.proficiency,
-        source = CASE WHEN excluded.source = 'Manual' THEN 'Manual' ELSE user_skills.source END;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (skill_name.strip(), category, source, proficiency))
-        conn.commit()
-        return True
+    clean_name = skill_name.strip()
+    if not clean_name:
+        return False
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+
+    try:
+        existing_skills = get_all_user_skills(user_id=uid, client=sb)
+        target_skill = None
+        for s in existing_skills:
+            if str(s.get("skill_name", "")).strip().lower() == clean_name.lower():
+                target_skill = s
+                break
+
+        if target_skill:
+            skill_id = target_skill["id"]
+            cat_to_save = category.strip() if category else target_skill.get("category", "General")
+            response = (
+                sb.table("user_skills")
+                .update({
+                    "proficiency": proficiency,
+                    "category": cat_to_save,
+                    "source": source
+                })
+                .eq("id", skill_id)
+                .eq("user_id", uid)
+                .execute()
+            )
+            try:
+                import streamlit as st
+                st.session_state[f"prof_{skill_id}"] = proficiency
+                st.session_state[f"cat_{skill_id}"] = cat_to_save
+            except Exception:
+                pass
+            return bool(response and response.data)
+        else:
+            payload = {
+                "user_id": uid,
+                "skill_name": clean_name,
+                "category": category.strip() if category else "General",
+                "source": source,
+                "proficiency": proficiency
+            }
+            response = (
+                sb.table("user_skills")
+                .insert(payload)
+                .execute()
+            )
+            return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def add_user_skills_bulk(skills: List[Dict[str, str]], source: str = "Resume") -> int:
+def add_user_skills_bulk(
+    skills: List[Dict[str, str]],
+    source: str = "Resume",
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> int:
     """
-    Inserta múltiples habilidades extraídas por la IA en una sola transacción.
-    Retorna la cantidad de habilidades procesadas.
+    Inserta o actualiza múltiples habilidades en Supabase en una sola operación upsert.
+    Usa on_conflict="user_id,skill_name" y retorna la cantidad de habilidades procesadas.
     """
-    insertados = 0
-    query = """
-    INSERT INTO user_skills (skill_name, category, source, proficiency, date_added)
-    VALUES (?, ?, ?, ?, date('now'))
-    ON CONFLICT(skill_name) DO UPDATE SET
-        category = excluded.category,
-        proficiency = excluded.proficiency;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for item in skills:
-            name = item.get("skill_name", "").strip()
-            cat = item.get("category", "DevOps")
-            prof = item.get("proficiency", "Intermediate")
-            if name:
-                cursor.execute(query, (name, cat, source, prof))
-                insertados += 1
-        conn.commit()
-    return insertados
+    if not skills:
+        return 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return 0
+    sb = client or get_supabase_client()
+    if not sb:
+        return 0
+
+    skills_map = {}
+    for item in skills:
+        name = item.get("skill_name", "").strip()
+        if name:
+            skills_map[name.lower()] = {
+                "user_id": uid,
+                "skill_name": name,
+                "category": item.get("category", "General").strip() or "General",
+                "source": source,
+                "proficiency": item.get("proficiency", "Intermediate")
+            }
+
+    if not skills_map:
+        return 0
+
+    records = list(skills_map.values())
+    try:
+        response = (
+            sb.table("user_skills")
+            .upsert(records, on_conflict="user_id,skill_name")
+            .execute()
+        )
+        if response and response.data:
+            return len(response.data)
+        return len(records)
+    except Exception:
+        return 0
 
 
-def get_all_user_skills() -> List[Dict[str, Any]]:
+def get_all_user_skills(user_id: Optional[str] = None, client: Any = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todas las habilidades del usuario ordenadas por categoría y nombre.
+    Obtiene todas las habilidades del usuario desde Supabase ordenadas por categoría y nombre.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
-    query = "SELECT * FROM user_skills ORDER BY category ASC, skill_name ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return []
+    sb = client or get_supabase_client()
+    if not sb:
+        return []
+    try:
+        response = (
+            sb.table("user_skills")
+            .select("*")
+            .eq("user_id", uid)
+            .order("category", desc=False)
+            .order("skill_name", desc=False)
+            .execute()
+        )
+        if response and response.data:
+            return response.data
+        return []
+    except Exception:
+        return []
 
 
-def update_user_skill_proficiency(skill_id: int, new_proficiency: str) -> bool:
+def update_user_skill_proficiency(
+    skill_id: int,
+    new_proficiency: str,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Modifica el nivel de dominio (proficiency) de una habilidad existente.
+    Modifica el nivel de dominio (proficiency) de una habilidad existente en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "UPDATE user_skills SET proficiency = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_proficiency, skill_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .update({"proficiency": new_proficiency})
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def update_user_skill_category(skill_id: int, new_category: str) -> bool:
+def update_user_skill_category(
+    skill_id: int,
+    new_category: str,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Modifica la categoría asignada a una habilidad existente.
+    Modifica la categoría asignada a una habilidad existente en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "UPDATE user_skills SET category = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_category, skill_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .update({"category": new_category.strip()})
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-
-def delete_user_skill(skill_id: int) -> bool:
+def delete_user_skill(
+    skill_id: int,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Elimina una habilidad del perfil del usuario por su ID.
+    Elimina una habilidad del perfil del usuario por su ID en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "DELETE FROM user_skills WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (skill_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .delete()
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
 # ==============================================================================
