@@ -1,40 +1,52 @@
-# 📋 Tareas Pendientes Antes del Despliegue en Producción
+# 📋 Tareas Pendientes Antes de Lanzar a Producción
 
-Lista de verificación y configuraciones requeridas antes de lanzar la aplicación **AI Job Application Tracker** a producción:
-
----
-
-## 🔐 1. Configuración de Correo y Autenticación (Supabase)
-- [ ] **Configurar SMTP propio en Supabase:**
-  - **Ruta:** *Supabase Dashboard* ➔ *Authentication* ➔ *Emails* ➔ *SMTP Settings*.
-  - **Servicios recomendados:** Resend, Brevo, SendGrid o Amazon SES.
-  - **Requisitos:** Configurar un dominio propio con registros DNS **SPF**, **DKIM** y **DMARC**.
-  - **Motivo:** Sin esto, los correos de confirmación usan el servidor compartido de Supabase, que tiene límites estrictos (rate limits bajos) y alta probabilidad de caer en la carpeta de spam o correo no deseado. Hacerlo antes del despliegue.
-
-- [ ] **Actualizar Site URL y Redirect URLs para Producción:**
-  - **Ruta:** *Supabase Dashboard* ➔ *Authentication* ➔ *URL Configuration*.
-  - Configurar **Site URL** con la URL pública de producción (ej. `https://tu-app.streamlit.app`).
-  - Añadir en **Redirect URLs** la URL pública permitida (`https://tu-app.streamlit.app/**`) además de las locales para desarrollo.
+Lista de tareas prioritarias y requerimientos técnicos antes del lanzamiento público de la aplicación:
 
 ---
 
-## ☁️ 2. Despliegue e Infraestructura (Streamlit Community Cloud)
-- [ ] **Configurar Secrets en la Nube:**
-  - Configurar en el panel de Streamlit Cloud (*Settings* ➔ *Secrets*) los mismos valores de `.streamlit/secrets.toml`:
-    - `SUPABASE_URL`
-    - `SUPABASE_KEY`
-    - `SUPABASE_SERVICE_ROLE_KEY`
-    - `SESSION_ENCRYPTION_KEY`
-    - `GEMINI_API_KEY`
-- [ ] **Verificar `requirements.txt`:**
-  - Confirmar que todas las dependencias instaladas en local estén reflejadas para que el build en la nube sea limpio y sin fallos.
+## 1. 📧 Configurar SMTP propio en Supabase
+- [ ] Configurar un proveedor de correo transaccional en **Supabase** (*Authentication* ➔ *Emails* ➔ *SMTP Settings*).
+- [ ] **Servicios recomendados:** Resend, Brevo o Amazon SES.
+- [ ] Configurar dominio propio y validar registros DNS esenciales (**SPF**, **DKIM** y **DMARC**).
+- [ ] *Motivo:* Sin un servidor SMTP propio, los correos de confirmación y reseteo de contraseña dependen del límite bajo compartido de Supabase y corren alto riesgo de caer en spam.
 
 ---
 
-## 🧪 3. Pruebas Finales de Aceptación (QA)
-- [ ] **Flujo de Registro y Confirmación:**
-  - Registro de cuenta nueva ➔ Recepción de correo ➔ Confirmación por enlace ➔ Redirección limpia a la app.
-- [ ] **Persistencia y Auto-login:**
-  - Iniciar sesión ➔ Navegar por pestañas ➔ Recargar página con F5 ➔ Confirmar que la sesión se mantiene activa sin interrupciones.
-- [ ] **Cierre de sesión:**
-  - Hacer clic en "Cerrar Sesión" ➔ Confirmar revocación del token y limpieza de la URL.
+## 2. 🏷️ Nombre de la App y Dominio Propio
+- [ ] Definir el nombre comercial final de la aplicación y branding.
+- [ ] Comprar el dominio web correspondiente (ej. en Cloudflare, Namecheap o Google Domains/Squarespace).
+- [ ] Configurar los registros DNS y enlazar el dominio personalizado con la plataforma de hosting.
+
+---
+
+## 3. 🖥️ Frontend y Renderizado: Reemplazar `st.components.v1.html` por `st.iframe`
+- [ ] Evaluar y migrar las llamadas a `st.components.v1.html` hacia `st.iframe` (o la solución de iframe nativa recomendada por Streamlit) para mejorar el aislamiento del DOM, estabilidad y compatibilidad con vistas previas responsivas en producción.
+
+---
+
+## 4. ⚖️ Fase 1: Operaciones, Cumplimiento Legal y Monitoreo
+- [ ] **Facturación y límites de Gemini (Google Cloud / Google AI Studio):**
+  - Configurar límites de cuotas, alertas de presupuesto y método de facturación formal para evitar bloqueos por rate limiting o costos imprevistos.
+- [ ] **Privacidad y Consentimiento Legal:**
+  - Redactar Términos y Condiciones y Política de Privacidad con asesoría de un abogado (tratamiento de datos laborales, currículums, cookies y consentimiento explícito GDPR / legislación local).
+- [ ] **Monitoreo de Errores con Sentry:**
+  - Integrar SDK de Sentry en Streamlit para capturar excepciones en tiempo real de los usuarios en producción.
+- [ ] **Logs y Pruebas Automatizadas:**
+  - Robustecer el logging estructurado y ejecutar la suite de pruebas unitarias/integración antes de liberar cada versión.
+
+---
+
+## 5. 🗄️ Separación de Entornos en Supabase (Staging vs. Producción)
+- [ ] Crear un proyecto independiente en Supabase para **Pruebas / Staging**, completamente aislado del proyecto de **Producción**.
+- [ ] Mantener las migraciones de esquemas y políticas RLS sincronizadas entre ambos proyectos para validar cambios sin poner en riesgo datos reales.
+
+---
+
+## 6. 🔐 Gestión Segura de Secretos en el Hosting
+- [ ] Al desplegar en la plataforma de producción (ej. Streamlit Community Cloud u otro proveedor), configurar todas las variables sensibles en la sección de **Secrets / Environment Variables** del panel del hosting:
+  - `SUPABASE_URL`
+  - `SUPABASE_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `SESSION_ENCRYPTION_KEY`
+  - `GEMINI_API_KEY`
+- [ ] Verificar que ningún archivo local `.streamlit/secrets.toml` o `.env` se incluya en el control de versiones (mantener en `.gitignore`).
