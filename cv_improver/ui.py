@@ -160,10 +160,32 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto"):
             st.session_state["cv_improver_active_schema"] = enhanced_resume
             st.session_state["cv_improver_language"] = resolved_lang
             st.session_state["cv_improver_bullets_status"] = {}
+            st.session_state.pop("cv_improver_draft_discarded", None)
+            persist_active_cv_draft()
             st.toast(f"¡CV analizado y optimizado en {lang_label} con éxito!", icon="🎉")
             st.rerun()
         except Exception as parse_err:
             st.error(f"Error procesando el currículum en {lang_label}: {parse_err}")
+
+
+def persist_active_cv_draft():
+    """Guarda en Supabase el borrador activo para garantizar continuidad permanente."""
+    schema = st.session_state.get("cv_improver_active_schema")
+    if schema is not None:
+        try:
+            from database import save_cv_improver_draft
+            schema_data = schema.model_dump() if hasattr(schema, "model_dump") else schema.dict()
+            draft = {
+                "schema": schema_data,
+                "bullets_status": st.session_state.get("cv_improver_bullets_status", {}),
+                "language": st.session_state.get("cv_improver_language", "es"),
+                "filename": st.session_state.get("cv_improver_filename", "CV_Optimizado"),
+                "raw_text": st.session_state.get("cv_improver_raw_text", ""),
+                "selected_cv_template": st.session_state.get("selected_cv_template", "moderna")
+            }
+            save_cv_improver_draft(draft)
+        except Exception as e:
+            print(f"Aviso al persistir borrador de CV: {e}")
 
 
 def render_cv_improver_page():
@@ -171,51 +193,30 @@ def render_cv_improver_page():
     st.title("✨ CV Improver: Diseños de Alto Impacto y Optimización con IA")
     st.caption("Crea un currículum moderno, limpio y espaciado que destaque ante reclutadores y sistemas ATS con plantillas contemporáneas.")
 
+    # --------------------------------------------------------------------------
+    # RESTAURACIÓN AUTOMÁTICA DEL BORRADOR GUARDADO EN SUPABASE
+    # --------------------------------------------------------------------------
+    if "cv_improver_active_schema" not in st.session_state and not st.session_state.get("cv_improver_draft_discarded"):
+        try:
+            from database import get_cv_improver_draft
+            saved_draft = get_cv_improver_draft()
+            if saved_draft and isinstance(saved_draft, dict) and "schema" in saved_draft:
+                st.session_state["cv_improver_active_schema"] = ResumeSchema(**saved_draft["schema"])
+                st.session_state["cv_improver_bullets_status"] = saved_draft.get("bullets_status", {})
+                st.session_state["cv_improver_language"] = saved_draft.get("language", "es")
+                st.session_state["cv_improver_filename"] = saved_draft.get("filename", "CV_Optimizado")
+                st.session_state["cv_improver_raw_text"] = saved_draft.get("raw_text", "")
+                if "selected_cv_template" in saved_draft:
+                    st.session_state["selected_cv_template"] = saved_draft["selected_cv_template"]
+        except Exception as e:
+            print(f"Aviso al restaurar borrador previo: {e}")
+
     # AVISO DE PRIVACIDAD Y SEGURIDAD
     st.info(
-        "🔒 **Entorno de Trabajo Seguro:** Toda la optimización y edición se realiza "
-        "en memoria. **Tus datos en My Profile y base de datos permanecen intactos sin modificaciones**."
+        "🔒 **Entorno de Trabajo Seguro:** Tu borrador se guarda en la nube para que continúes cuando quieras. "
+        "Tus datos maestros en My Profile permanecen intactos."
     )
 
-    # --------------------------------------------------------------------------
-    # CONFIGURACIÓN DEL PROVEEDOR LLM (Gemini / Anthropic / Reglas Locales)
-    # --------------------------------------------------------------------------
-    default_gemini = st.session_state.get("cv_improver_gemini_key", os.getenv("GEMINI_API_KEY", ""))
-    default_anthropic = st.session_state.get("cv_improver_anthropic_key", os.getenv("ANTHROPIC_API_KEY", ""))
-
-    with st.expander("⚙️ Motor de IA y Configuración de API", expanded=False):
-        c_k1, c_k2 = st.columns(2)
-        with c_k1:
-            custom_gemini = st.text_input(
-                "Google Gemini API Key (Recomendado)",
-                value=default_gemini,
-                type="password",
-                key="input_gemini_cv_improver",
-                help="Utilizado para análisis de CV y optimización con modelos Gemini."
-            )
-            if custom_gemini:
-                st.session_state["cv_improver_gemini_key"] = custom_gemini
-
-            custom_anthropic = st.text_input(
-                "Anthropic API Key (Claude)",
-                value=default_anthropic,
-                type="password",
-                key="input_anthropic_cv_improver",
-                help="Opcional si prefieres usar Claude 3.5 Sonnet."
-            )
-            if custom_anthropic:
-                st.session_state["cv_improver_anthropic_key"] = custom_anthropic
-
-        with c_k2:
-            st.markdown("**Estado del Motor:**")
-            active_p, p_name = get_active_llm_provider(
-                anthropic_key=st.session_state.get("cv_improver_anthropic_key"),
-                gemini_key=st.session_state.get("cv_improver_gemini_key")
-            )
-            if active_p is not None:
-                st.success(f"🤖 **Motor Activo:** {p_name} (IA Conectada)")
-            else:
-                st.info("⚡ **Motor Activo:** Reglas Estructuradas ATS (Heurístico Local sin API)")
 
     # --------------------------------------------------------------------------
     # PASO 1: ORIGEN DEL CV
@@ -329,6 +330,8 @@ def render_cv_improver_page():
                         st.session_state["cv_improver_active_schema"] = schema_copy
                         st.session_state["cv_improver_language"] = "es"
                         st.session_state["cv_improver_bullets_status"] = {}
+                        st.session_state.pop("cv_improver_draft_discarded", None)
+                        persist_active_cv_draft()
                         st.toast("Copia importada y optimizada en Español.", icon="✅")
                         st.rerun()
                 except Exception as imp_err:
@@ -353,6 +356,8 @@ def render_cv_improver_page():
                         st.session_state["cv_improver_active_schema"] = schema_copy
                         st.session_state["cv_improver_language"] = "en"
                         st.session_state["cv_improver_bullets_status"] = {}
+                        st.session_state.pop("cv_improver_draft_discarded", None)
+                        persist_active_cv_draft()
                         st.toast("Copia importada y optimizada en Inglés.", icon="✅")
                         st.rerun()
                 except Exception as imp_err:
@@ -367,6 +372,21 @@ def render_cv_improver_page():
             st.session_state["cv_improver_bullets_status"] = {}
 
         st.divider()
+
+        col_draft_hdr1, col_draft_hdr2 = st.columns([3.5, 1.5])
+        with col_draft_hdr1:
+            st.markdown("### 2️⃣ Panel de Mejoras y Plantillas")
+            st.caption("💾 **Borrador sincronizado en la nube:** Tu progreso se guarda automáticamente y puedes continuar en cualquier momento.")
+        with col_draft_hdr2:
+            st.write("")
+            if st.button("🗑️ Descartar borrador y reiniciar", key="btn_clear_cv_improver_draft", use_container_width=True, help="Elimina el borrador de trabajo actual en Supabase para empezar desde cero"):
+                from database import delete_cv_improver_draft
+                delete_cv_improver_draft()
+                for k in ["cv_improver_active_schema", "cv_improver_bullets_status", "cv_improver_language", "cv_improver_filename", "cv_improver_raw_text", "cv_improver_file_hash"]:
+                    st.session_state.pop(k, None)
+                st.session_state["cv_improver_draft_discarded"] = True
+                st.toast("Borrador descartado con éxito.", icon="ℹ️")
+                st.rerun()
 
         # BARRA DE IDIOMA ACTIVO Y CAMBIO RÁPIDO
         active_lang = st.session_state.get("cv_improver_language", "es")
@@ -858,3 +878,6 @@ def render_cv_improver_page():
                     s_str = ", ".join(sc.skills)
                     ed_s = st.text_input("Habilidades (separadas por coma):", value=s_str, key=f"ed_sk_{sc_idx}")
                     sc.skills = [s.strip() for s in ed_s.split(",") if s.strip()]
+
+        # Auto-guardado en Supabase del progreso actual
+        persist_active_cv_draft()

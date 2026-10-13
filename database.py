@@ -5,221 +5,18 @@
 
 import os
 import re
-import sqlite3
+import hashlib
+from datetime import datetime, timezone, timedelta, date
 from typing import List, Dict, Optional, Any
-
-# Directorio base del proyecto (donde reside este archivo .py)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Ruta absoluta de la base de datos local
-DB_NAME = os.path.join(BASE_DIR, "job_tracker.db")
-
+import pandas as pd
+from cryptography.fernet import Fernet
+from supabase import Client
 
 
 # ------------------------------------------------------------------------------
-# CONEXIÓN Y CONFIGURACIÓN
+# 1. ESQUEMA DE BASE DE DATOS MIGRADO A SUPABASE
 # ------------------------------------------------------------------------------
-def get_connection():
-    """
-    Crea y retorna una conexión a la base de datos SQLite.
-    
-    CONCEPTO - row_factory:
-    Por defecto, sqlite3 devuelve cada fila como una tupla: (1, 'Google', ...).
-    Al activar sqlite3.Row, podemos acceder a las columnas tanto por índice
-    como por su NOMBRE exacto: fila['company'], lo cual hace el código mucho
-    más legible y reduce errores.
-    
-    CONCEPTO - PRAGMA foreign_keys = ON:
-    Por compatibilidad histórica, SQLite viene con el soporte de llaves foráneas
-    desactivado por defecto. Es una buena práctica activarlo en cada conexión
-    para garantizar la integridad referencial de los datos.
-    """
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
-
-
-# ------------------------------------------------------------------------------
-# 1. CREACIÓN DEL SCHEMA (Tablas Relacionales)
-# ------------------------------------------------------------------------------
-def create_tables():
-    """
-    Crea las 4 tablas principales del sistema si no existen:
-    1. applications  -> Registro principal de cada postulación
-    2. interviews    -> Entrevistas vinculadas a una postulación (1 a N)
-    3. skills        -> Habilidades requeridas por el puesto de trabajo (1 a N)
-    4. user_skills   -> Habilidades reales del candidato (mi perfil)
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        # ----------------------------------------------------------------------
-        # TABLA 1: applications
-        # Representa la entidad raíz. Cada fila es una postulación individual.
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company TEXT NOT NULL,
-            position TEXT NOT NULL,
-            application_date TEXT,
-            status TEXT NOT NULL DEFAULT 'Applied',
-            salary TEXT,
-            work_mode TEXT,
-            location TEXT,
-            job_url TEXT,
-            recruiter TEXT,
-            notes TEXT,
-            follow_up_date TEXT
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 2: interviews
-        # Relación 1 a N: Una postulación puede tener múltiples etapas de entrevista
-        # (ej. HR Screen, Technical Interview, Hiring Manager).
-        # FOREIGN KEY asegura que application_id pertenezca a una aplicación real.
-        # ON DELETE CASCADE: Si se borra la postulación, se borran sus entrevistas.
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS interviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            application_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            interview_type TEXT NOT NULL,
-            notes TEXT,
-            result TEXT DEFAULT 'Pending',
-            FOREIGN KEY (application_id) REFERENCES applications (id) ON DELETE CASCADE
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 3: skills (Skills de la oferta laboral)
-        # Relación 1 a N: Una vacante pide múltiples skills técnicas o blandas.
-        # match_status: 'Match', 'Missing' o 'Learning' (lo usaremos con la IA en Fase 5).
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            application_id INTEGER NOT NULL,
-            skill TEXT NOT NULL,
-            match_status TEXT DEFAULT 'Pending',
-            FOREIGN KEY (application_id) REFERENCES applications (id) ON DELETE CASCADE
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA 4: user_profile (Perfil del Usuario / Master Profile)
-        # Guarda información general del usuario (un solo registro, id=1).
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_profile (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            full_name TEXT,
-            current_title TEXT,
-            email TEXT,
-            phone TEXT,
-            location TEXT,
-            summary TEXT,
-            preferred_language TEXT DEFAULT NULL,
-            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-        );
-        """)
-
-        # Migración Fase 6.1: asegurar que user_profile tenga la columna preferred_language
-        cursor.execute("PRAGMA table_info(user_profile);")
-        profile_cols = [col[1] for col in cursor.fetchall()]
-        if profile_cols and "preferred_language" not in profile_cols:
-            cursor.execute("ALTER TABLE user_profile ADD COLUMN preferred_language TEXT DEFAULT NULL;")
-
-        # ----------------------------------------------------------------------
-        # TABLA 5: user_skills (Mi inventario maestro de habilidades)
-        # Guarda las tecnologías y habilidades que domino, su procedencia y nivel.
-        # ----------------------------------------------------------------------
-        cursor.execute("PRAGMA table_info(user_skills);")
-        cols = [col[1] for col in cursor.fetchall()]
-        if cols and "skill_name" not in cols:
-            cursor.execute("DROP TABLE user_skills;")
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_skills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            skill_name TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            source TEXT DEFAULT 'Manual',
-            proficiency TEXT DEFAULT 'Intermediate',
-            date_added TEXT DEFAULT (date('now'))
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # FASE 5.7: REINICIO LIMPIO DE RESUME_BULLETS Y NUEVAS TABLAS
-        # 1. experience_entries: experiencia laboral estructurada (fechas normalizadas)
-        # 2. resume_bullets: bullets con foreign key experience_id
-        # 3. education_entries: historial educativo y certificaciones
-        # ----------------------------------------------------------------------
-        cursor.execute("PRAGMA table_info(resume_bullets);")
-        cols_b = [col[1] for col in cursor.fetchall()]
-        if cols_b and "section" in cols_b:
-            cursor.execute("DROP TABLE IF EXISTS resume_bullets;")
-            cursor.execute("DROP TABLE IF EXISTS experience_entries;")
-            cursor.execute("DROP TABLE IF EXISTS education_entries;")
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS experience_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company TEXT NOT NULL,
-            position TEXT NOT NULL,
-            start_date TEXT,
-            end_date TEXT,
-            is_current INTEGER DEFAULT 0,
-            order_index INTEGER DEFAULT 0
-        );
-        """)
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS resume_bullets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            experience_id INTEGER NOT NULL,
-            bullet_text TEXT NOT NULL,
-            original_text TEXT NOT NULL,
-            current_text TEXT NOT NULL,
-            order_index INTEGER DEFAULT 0,
-            FOREIGN KEY (experience_id) REFERENCES experience_entries (id) ON DELETE CASCADE
-        );
-        """)
-
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS education_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            institution TEXT NOT NULL,
-            credential TEXT NOT NULL,
-            start_date TEXT,
-            end_date TEXT,
-            order_index INTEGER DEFAULT 0
-        );
-        """)
-
-        # ----------------------------------------------------------------------
-        # TABLA: auth_sessions (Persistencia de sesión 4 horas)
-        # Permite mantener la sesión activa entre refrescos (F5) con validez de 4 horas
-        # ----------------------------------------------------------------------
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-            session_id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            user_email TEXT NOT NULL,
-            access_token TEXT NOT NULL,
-            refresh_token TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        );
-        """)
-
-        conn.commit()
-
-    # Sembrar datos de ejemplo si la tabla de experiencia está vacía
-    seed_default_resume_bullets()
+# Las tablas residen en Supabase (PostgreSQL). Ver supabase_schema.sql.
 
 
 # ------------------------------------------------------------------------------
@@ -296,27 +93,39 @@ PROFICIENCY_LEVELS = [
 ]
 
 
-def get_all_distinct_categories() -> List[str]:
+def get_all_distinct_categories(user_id: Optional[str] = None, client: Any = None) -> List[str]:
     """
     Retorna la lista unificada y ordenada de categorías:
     las predeterminadas en SKILL_CATEGORIES más cualquier categoría personalizada
-    creada o registrada en la base de datos SQLite.
+    creada o registrada por el usuario en Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
     categorias = set(SKILL_CATEGORIES)
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return sorted(list(categorias))
+    sb = client or get_supabase_client()
+    if not sb:
+        return sorted(list(categorias))
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT category FROM user_skills WHERE category IS NOT NULL AND category != '';")
-            for row in cursor.fetchall():
-                if row[0]:
-                    categorias.add(row[0].strip())
+        response = (
+            sb.table("user_skills")
+            .select("category")
+            .eq("user_id", uid)
+            .execute()
+        )
+        if response and response.data:
+            for row in response.data:
+                cat = row.get("category")
+                if cat and str(cat).strip():
+                    categorias.add(str(cat).strip())
     except Exception:
         pass
     return sorted(list(categorias))
 
 
 # ------------------------------------------------------------------------------
-# 2. OPERACIONES CRUD: CREATE (Insertar)
+# 2. OPERACIONES CRUD: APPLICATIONS (Módulo 4 - Migración Supabase)
 # ------------------------------------------------------------------------------
 def insert_application(
     company: str,
@@ -329,115 +138,231 @@ def insert_application(
     job_url: Optional[str] = None,
     recruiter: Optional[str] = None,
     notes: Optional[str] = None,
-    follow_up_date: Optional[str] = None
+    follow_up_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta una nueva aplicación en la base de datos usando consultas parametrizadas (?)
-    para evitar inyecciones SQL.
-    
-    Retorna:
-        El ID autogenerado del nuevo registro insertado.
+    Inserta una nueva postulación en Supabase vinculada al usuario autenticado.
+    Retorna el ID numérico generado.
     """
-    query = """
-    INSERT INTO applications (
-        company, position, status, application_date, salary,
-        work_mode, location, job_url, recruiter, notes, follow_up_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    """
-    params = (
-        company, position, status, application_date, salary,
-        work_mode, location, job_url, recruiter, notes, follow_up_date
-    )
-    
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return cursor.lastrowid
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en insert_application: no hay cliente de sesión o usuario autenticado")
+        return 0
+
+    clean_app_date = application_date.strip() if application_date and application_date.strip() else None
+    clean_fup_date = follow_up_date.strip() if follow_up_date and follow_up_date.strip() else None
+
+    payload = {
+        "user_id": uid,
+        "company": company.strip() if company else "",
+        "position": position.strip() if position else "",
+        "status": status.strip() if status else "Applied",
+        "application_date": clean_app_date,
+        "salary": salary.strip() if salary and salary.strip() else None,
+        "work_mode": work_mode.strip() if work_mode and work_mode.strip() else None,
+        "location": location.strip() if location and location.strip() else None,
+        "job_url": job_url.strip() if job_url and job_url.strip() else None,
+        "recruiter": recruiter.strip() if recruiter and recruiter.strip() else None,
+        "notes": notes.strip() if notes and notes.strip() else None,
+        "follow_up_date": clean_fup_date
+    }
+
+    try:
+        res = client.table("applications").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        err_msg = str(e)
+        if "applications_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
+            try:
+                admin = _get_service_role_client()
+                target_client = admin if admin else client
+                res_max = target_client.table("applications").select("id").order("id", desc=True).limit(1).execute()
+                max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
+                payload_fallback = dict(payload)
+                payload_fallback["id"] = max_id + 1
+                res_fb = client.table("applications").insert(payload_fallback).execute()
+                if res_fb.data and len(res_fb.data) > 0:
+                    return res_fb.data[0].get("id", 0)
+            except Exception as e_fb:
+                print(f"Error en fallback de ID para applications: {e_fb}")
+        print(f"Error al insertar aplicación en Supabase: {e}")
+        return 0
 
 
-def insert_application_skills(application_id: int, skills: List[Dict[str, str]]) -> int:
+def insert_application_skills(
+    application_id: int,
+    skills: List[Dict[str, str]],
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> int:
     """
-    Inserta las habilidades asociadas a una vacante con su estado de coincidencia ('strong', 'partial', 'missing').
-    
-    Parámetros:
-        application_id: ID de la aplicación en la tabla applications.
-        skills: Lista de diccionarios, ej. [{"skill": "Python", "match_status": "strong"}]
-        
-    Retorna:
-        Cantidad de habilidades insertadas.
+    Inserta las habilidades asociadas a una postulación con su match_status en Supabase,
+    vinculadas tanto a application_id como a user_id.
+    Retorna la cantidad de habilidades insertadas.
     """
-    query = """
-    INSERT INTO skills (application_id, skill, match_status)
-    VALUES (?, ?, ?);
-    """
-    insertados = 0
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for item in skills:
-            nombre = item.get("skill", "").strip()
-            status = item.get("match_status", "strong").strip()
-            if nombre:
-                cursor.execute(query, (application_id, nombre, status))
-                insertados += 1
-        conn.commit()
-    return insertados
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en insert_application_skills: no hay cliente de sesión o usuario autenticado")
+        return 0
+
+    filas = []
+    for item in skills:
+        nombre = item.get("skill", "").strip()
+        st_match = item.get("match_status", "strong").strip()
+        if nombre:
+            filas.append({
+                "user_id": uid,
+                "application_id": application_id,
+                "skill": nombre,
+                "match_status": st_match
+            })
+
+    if not filas:
+        return 0
+
+    try:
+        res = client.table("skills").insert(filas).execute()
+        return len(res.data) if res.data else 0
+    except Exception as e:
+        err_msg = str(e)
+        if "skills_pkey" in err_msg or "duplicate key" in err_msg or "23505" in err_msg:
+            try:
+                admin = _get_service_role_client()
+                target_client = admin if admin else client
+                res_max = target_client.table("skills").select("id").order("id", desc=True).limit(1).execute()
+                max_id = int(res_max.data[0]["id"]) if (res_max.data and len(res_max.data) > 0) else 0
+                filas_fallback = []
+                for idx, f in enumerate(filas, start=1):
+                    f_copy = dict(f)
+                    f_copy["id"] = max_id + idx
+                    filas_fallback.append(f_copy)
+                res_fb = client.table("skills").insert(filas_fallback).execute()
+                return len(res_fb.data) if res_fb.data else 0
+            except Exception as e_fb:
+                print(f"Error en fallback de ID para skills: {e_fb}")
+        print(f"Error al insertar habilidades de aplicación en Supabase: {e}")
+        return 0
 
 
-def get_skills_by_application(application_id: int) -> List[Dict[str, Any]]:
+def get_skills_by_application(
+    application_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Recupera todas las habilidades vinculadas a una postulación específica,
-    indicando el estado de match ('strong', 'partial', 'missing').
+    Recupera todas las habilidades de una postulación específica para el usuario autenticado.
     """
-    query = "SELECT id, application_id, skill, match_status FROM skills WHERE application_id = ? ORDER BY id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (application_id,))
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_skills_by_application: no hay cliente de sesión o usuario autenticado")
+        return []
+
+    try:
+        res = (
+            client.table("skills")
+            .select("*")
+            .eq("application_id", application_id)
+            .eq("user_id", uid)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener habilidades de la postulación {application_id} en Supabase: {e}")
+        return []
 
 
-# ------------------------------------------------------------------------------
-# 3. OPERACIONES CRUD: READ (Consultar)
-# ------------------------------------------------------------------------------
-def get_all_applications() -> List[Dict[str, Any]]:
+def get_all_applications(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene todas las aplicaciones ordenadas por ID de forma descendente.
-    Retorna una lista de diccionarios limpios.
+    Obtiene todas las postulaciones del usuario autenticado ordenadas por ID descendente.
     """
-    query = "SELECT * FROM applications ORDER BY id DESC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        # Convertimos sqlite3.Row a dict estándar de Python
-        return [dict(row) for row in rows]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_all_applications: no hay cliente de sesión o usuario autenticado")
+        return []
+
+    try:
+        res = (
+            client.table("applications")
+            .select("*")
+            .eq("user_id", uid)
+            .order("id", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener postulaciones en Supabase: {e}")
+        return []
 
 
-def get_application_by_id(app_id: int) -> Optional[Dict[str, Any]]:
+def get_application_by_id(
+    app_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Optional[Dict[str, Any]]:
     """
-    Busca una aplicación específica por su identificador primario (id).
+    Busca una postulación específica por ID para el usuario autenticado.
     """
-    query = "SELECT * FROM applications WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (app_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en get_application_by_id: no hay cliente de sesión o usuario autenticado")
+        return None
+
+    try:
+        res = (
+            client.table("applications")
+            .select("*")
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        return None
+    except Exception as e:
+        print(f"Error al obtener aplicación {app_id} en Supabase: {e}")
+        return None
 
 
-# ------------------------------------------------------------------------------
-# 4. OPERACIONES CRUD: UPDATE (Actualizar)
-# ------------------------------------------------------------------------------
-def update_application_status(app_id: int, new_status: str) -> bool:
+def update_application_status(
+    app_id: int,
+    new_status: str,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Actualiza el estado de una aplicación existente (ej. de 'Applied' a 'Interview').
+    Actualiza el estado de una postulación en Supabase, acotado al usuario autenticado.
     """
-    query = "UPDATE applications SET status = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_status, app_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_application_status: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("applications")
+            .update({"status": new_status.strip()})
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar estado de la aplicación {app_id} en Supabase: {e}")
+        return False
 
 
 def update_application(
@@ -451,98 +376,122 @@ def update_application(
     location: Optional[str] = None,
     job_url: Optional[str] = None,
     notes: Optional[str] = None,
-    follow_up_date: Optional[str] = None
+    follow_up_date: Optional[str] = None,
+    recruiter: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza todos los campos editables de una aplicación existente en SQLite,
-    incluyendo la fecha de seguimiento (follow_up_date).
+    Actualiza los campos editables de una postulación en Supabase, acotado al usuario autenticado.
     """
-    query = """
-    UPDATE applications
-    SET company = ?, position = ?, status = ?, application_date = ?,
-        salary = ?, work_mode = ?, location = ?, job_url = ?, notes = ?, follow_up_date = ?
-    WHERE id = ?;
-    """
-    params = (
-        company, position, status, application_date,
-        salary, work_mode, location, job_url, notes, follow_up_date, app_id
-    )
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_application: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    clean_app_date = application_date.strip() if application_date and application_date.strip() else None
+    clean_fup_date = follow_up_date.strip() if follow_up_date and follow_up_date.strip() else None
+
+    payload = {
+        "company": company.strip() if company else "",
+        "position": position.strip() if position else "",
+        "status": status.strip() if status else "Applied",
+        "application_date": clean_app_date,
+        "salary": salary.strip() if salary and salary.strip() else None,
+        "work_mode": work_mode.strip() if work_mode and work_mode.strip() else None,
+        "location": location.strip() if location and location.strip() else None,
+        "job_url": job_url.strip() if job_url and job_url.strip() else None,
+        "notes": notes.strip() if notes and notes.strip() else None,
+        "follow_up_date": clean_fup_date
+    }
+    if recruiter is not None:
+        payload["recruiter"] = recruiter.strip() if recruiter and recruiter.strip() else None
+
+    try:
+        res = (
+            client.table("applications")
+            .update(payload)
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar aplicación {app_id} en Supabase: {e}")
+        return False
 
 
+def delete_application(
+    app_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
+    """
+    Elimina una postulación de Supabase, acotado al usuario autenticado.
+    NO renumera IDs (mantiene la integridad referencial y secuencias de PostgreSQL).
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_application: no hay cliente de sesión o usuario autenticado")
+        return False
+
+    try:
+        client.table("skills").delete().eq("application_id", app_id).eq("user_id", uid).execute()
+        client.table("interviews").delete().eq("application_id", app_id).eq("user_id", uid).execute()
+        res = (
+            client.table("applications")
+            .delete()
+            .eq("id", app_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar aplicación {app_id} en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
-# 5. OPERACIONES CRUD: DELETE (Eliminar)
+# 6. MÉTRICAS Y AGREGACIONES DEL DASHBOARD CON PANDAS (Módulo 4)
 # ------------------------------------------------------------------------------
-def delete_application(app_id: int) -> bool:
+def get_dashboard_counts(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Elimina una aplicación por su ID y reacomoda los IDs de todas las aplicaciones
-    posteriores (id = id - 1) para mantener una secuencia continua sin huecos.
+    Calcula las 5 métricas clave para el usuario autenticado usando Pandas en memoria:
+    - total_applications
+    - interviews ('Recruiter Screen', 'Technical Interview', 'Final Interview')
+    - offers ('Offer')
+    - rejections ('Rejected')
+    - follow_ups (follow_up_date <= hoy)
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = OFF;")
-        cursor.execute("DELETE FROM applications WHERE id = ?;", (app_id,))
-        deleted = cursor.rowcount > 0
-        if deleted:
-            cursor.execute("DELETE FROM skills WHERE application_id = ?;", (app_id,))
-            cursor.execute("DELETE FROM interviews WHERE application_id = ?;", (app_id,))
-            cursor.execute("UPDATE applications SET id = id - 1 WHERE id > ?;", (app_id,))
-            cursor.execute("UPDATE skills SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
-            cursor.execute("UPDATE interviews SET application_id = application_id - 1 WHERE application_id > ?;", (app_id,))
-            cursor.execute("UPDATE sqlite_sequence SET seq = COALESCE((SELECT MAX(id) FROM applications), 0) WHERE name = 'applications';")
-        cursor.execute("PRAGMA foreign_keys = ON;")
-        conn.commit()
-        return deleted
+    default = {
+        "total_applications": 0,
+        "interviews": 0,
+        "offers": 0,
+        "rejections": 0,
+        "follow_ups": 0
+    }
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return default
 
+    try:
+        df = pd.DataFrame(apps)
+        total_apps = len(df)
+        interviews = len(df[df["status"].isin(["Recruiter Screen", "Technical Interview", "Final Interview"])]) if "status" in df.columns else 0
+        offers = len(df[df["status"] == "Offer"]) if "status" in df.columns else 0
+        rejections = len(df[df["status"] == "Rejected"]) if "status" in df.columns else 0
 
-# ------------------------------------------------------------------------------
-# 6. CONSULTAS DE AGREGACIÓN PARA EL DASHBOARD (Sub-fase 4a)
-# ------------------------------------------------------------------------------
-def get_dashboard_counts() -> Dict[str, int]:
-    """
-    Ejecuta consultas de agregación SQL (COUNT) para calcular las 5 métricas clave:
-    1. Total applications: conteo absoluto de postulaciones.
-    2. Interviews: según la regla de negocio (Recruiter Screen, Technical Interview, Final Interview).
-    3. Offers: ofertas recibidas.
-    4. Rejections: postulaciones rechazadas.
-    5. Follow-ups: postulaciones con fecha de seguimiento asignada que esté próxima o vencida.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        # 1. Total Applications (COUNT(*) cuenta todas las filas)
-        cursor.execute("SELECT COUNT(*) FROM applications;")
-        total_apps = cursor.fetchone()[0]
-
-        # 2. Interviews (Cláusula IN para múltiples valores)
-        cursor.execute("""
-            SELECT COUNT(*) FROM applications
-            WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview');
-        """)
-        interviews = cursor.fetchone()[0]
-
-        # 3. Offers
-        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Offer';")
-        offers = cursor.fetchone()[0]
-
-        # 4. Rejections
-        cursor.execute("SELECT COUNT(*) FROM applications WHERE status = 'Rejected';")
-        rejections = cursor.fetchone()[0]
-
-        # 5. Follow-ups: con fecha de seguimiento definida y vencida o para hoy
-        cursor.execute("""
-            SELECT COUNT(*) FROM applications
-            WHERE follow_up_date IS NOT NULL
-              AND follow_up_date != ''
-              AND date(follow_up_date) <= date('now');
-        """)
-        follow_ups = cursor.fetchone()[0]
+        today_str = date.today().isoformat()
+        if "follow_up_date" in df.columns:
+            valid_fu = df["follow_up_date"].dropna().astype(str).str.strip()
+            follow_ups = int(((valid_fu != "") & (valid_fu <= today_str)).sum())
+        else:
+            follow_ups = 0
 
         return {
             "total_applications": total_apps,
@@ -551,16 +500,17 @@ def get_dashboard_counts() -> Dict[str, int]:
             "rejections": rejections,
             "follow_ups": follow_ups
         }
+    except Exception as e:
+        print(f"Error al calcular get_dashboard_counts con pandas: {e}")
+        return default
 
 
-def get_status_breakdown() -> Dict[str, int]:
+def get_status_breakdown(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Obtiene la cantidad de aplicaciones agrupadas por cada estado (Status).
-    
-    CONCEPTO SQL - GROUP BY:
-    En lugar de hacer 7 consultas con WHERE para cada estado, GROUP BY le pide
-    al motor de base de datos que agrupe las filas que tengan el mismo 'status'
-    y aplique COUNT(*) a cada uno de esos grupos en una sola operación de alto rendimiento.
+    Calcula la distribución de postulaciones por estado para el usuario autenticado usando Pandas.
     """
     estados_base = [
         "Applied",
@@ -571,428 +521,632 @@ def get_status_breakdown() -> Dict[str, int]:
         "Rejected",
         "Ghosted"
     ]
-    # Inicializamos el diccionario con 0 para que todos los estados existan
     breakdown = {estado: 0 for estado in estados_base}
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return breakdown
 
-    query = "SELECT status, COUNT(*) FROM applications GROUP BY status;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        for row in cursor.fetchall():
-            status_name = row[0]
-            count = row[1]
-            breakdown[status_name] = count
+    try:
+        df = pd.DataFrame(apps)
+        if "status" in df.columns:
+            counts = df["status"].value_counts().to_dict()
+            for st_name, cnt in counts.items():
+                if st_name:
+                    breakdown[st_name] = int(cnt)
+        return breakdown
+    except Exception as e:
+        print(f"Error al calcular get_status_breakdown con pandas: {e}")
+        return breakdown
 
-    return breakdown
 
-
-# ------------------------------------------------------------------------------
-# 7. CONSULTAS Y CÁLCULOS ESTADÍSTICOS (Fase 7: Statistics)
-# ------------------------------------------------------------------------------
-def get_work_mode_breakdown() -> Dict[str, int]:
+def get_work_mode_breakdown(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, int]:
     """
-    Obtiene el número de aplicaciones por modalidad de trabajo (Remote, Hybrid, On-site).
-    Utiliza SQL GROUP BY work_mode.
+    Calcula la distribución por modalidad de trabajo usando Pandas.
     """
     modalidades = {"Remote": 0, "Hybrid": 0, "On-site": 0}
-    query = """
-    SELECT work_mode, COUNT(*) 
-    FROM applications 
-    WHERE work_mode IS NOT NULL AND work_mode != ''
-    GROUP BY work_mode;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        for row in cursor.fetchall():
-            mode, count = row[0], row[1]
-            if mode in modalidades:
-                modalidades[mode] = count
-            else:
-                modalidades[mode or "Otro"] = count
-    return modalidades
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return modalidades
+
+    try:
+        df = pd.DataFrame(apps)
+        if "work_mode" in df.columns:
+            valid_wm = df["work_mode"].dropna().astype(str).str.strip()
+            valid_wm = valid_wm[valid_wm != ""]
+            counts = valid_wm.value_counts().to_dict()
+            for mode, cnt in counts.items():
+                if mode in modalidades:
+                    modalidades[mode] = int(cnt)
+                else:
+                    modalidades[mode or "Otro"] = int(cnt)
+        return modalidades
+    except Exception as e:
+        print(f"Error al calcular get_work_mode_breakdown con pandas: {e}")
+        return modalidades
 
 
-def get_salary_statistics() -> Dict[str, Any]:
+def get_salary_statistics(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Dict[str, Any]:
     """
-    Calcula métricas salariales (mínimo, promedio, máximo y cantidad de registros válidos).
-    
-    Lógica de limpieza y cálculo:
-    - Extrae únicamente valores numéricos en USD (ignorando monedas locales como CRC o campos vacíos).
-    - Si una fila tiene un rango salarial (ej. '4500-5000 USD'), calcula el punto medio del rango.
-    - Ignora valores no numéricos ('TBD', vacíos) para no alterar el promedio.
+    Calcula estadísticas salariales en USD (min, avg, max, count) usando Pandas.
     """
-    query = "SELECT salary FROM applications WHERE salary IS NOT NULL AND salary != '';"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
+    default = {"min": 0.0, "avg": 0.0, "max": 0.0, "count": 0}
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return default
 
-    salarios_validos = []
-    non_usd_codes = ["CRC", "EUR", "GBP", "CAD", "MXN", "GTQ", "HNL", "NIO", "PAB", "DOP", "BRL", "COP", "ARS", "CLP", "PEN", "UYU", "BOB", "PYG", "VES", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN", "ISK", "TRY"]
-    for row in rows:
-        val = str(row[0])
-        val_upper = val.upper()
-        # Ignoramos monedas explícitamente no USD para no mezclar unidades (ej. CRC, EUR, etc.)
-        if any(c in val_upper for c in non_usd_codes):
-            continue
-        # Buscamos números mayores o iguales a 500 para evitar números de versión o ruido
-        nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", val.replace(",", "")) if float(n) >= 500]
-        if nums:
-            # Promedio del rango o el valor individual
-            salarios_validos.append(sum(nums) / len(nums))
+    try:
+        df = pd.DataFrame(apps)
+        if "salary" not in df.columns:
+            return default
 
-    if not salarios_validos:
-        return {"min": 0.0, "avg": 0.0, "max": 0.0, "count": 0}
+        valid_salaries = df["salary"].dropna().astype(str).str.strip()
+        valid_salaries = valid_salaries[valid_salaries != ""]
+        if valid_salaries.empty:
+            return default
 
-    return {
-        "min": round(min(salarios_validos), 2),
-        "avg": round(sum(salarios_validos) / len(salarios_validos), 2),
-        "max": round(max(salarios_validos), 2),
-        "count": len(salarios_validos)
-    }
+        salarios_validos = []
+        non_usd_codes = ["CRC", "EUR", "GBP", "CAD", "MXN", "GTQ", "HNL", "NIO", "PAB", "DOP", "BRL", "COP", "ARS", "CLP", "PEN", "UYU", "BOB", "PYG", "VES", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON", "BGN", "ISK", "TRY"]
 
+        for val in valid_salaries:
+            val_upper = val.upper()
+            if any(c in val_upper for c in non_usd_codes):
+                continue
+            nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", val.replace(",", "")) if float(n) >= 500]
+            if nums:
+                salarios_validos.append(sum(nums) / len(nums))
 
-def get_monthly_applications() -> List[Dict[str, Any]]:
-    """
-    Obtiene la cantidad de postulaciones agrupadas cronológicamente por mes (YYYY-MM).
-    
-    CONCEPTO SQL:
-    Usa la función substr(application_date, 1, 7) para extraer el año y mes ('2026-04'),
-    agrupa por esa fecha truncada con GROUP BY y ordena cronológicamente con ORDER BY.
-    """
-    query = """
-    SELECT substr(application_date, 1, 7) as mes, COUNT(*) as total
-    FROM applications 
-    WHERE application_date IS NOT NULL AND application_date != ''
-    GROUP BY mes
-    ORDER BY mes ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [{"mes": row[0], "total": row[1]} for row in cursor.fetchall()]
+        if not salarios_validos:
+            return default
+
+        sal_series = pd.Series(salarios_validos)
+        return {
+            "min": round(float(sal_series.min()), 2),
+            "avg": round(float(sal_series.mean()), 2),
+            "max": round(float(sal_series.max()), 2),
+            "count": int(sal_series.count())
+        }
+    except Exception as e:
+        print(f"Error al calcular get_salary_statistics con pandas: {e}")
+        return default
 
 
-def get_monthly_interviews() -> List[Dict[str, Any]]:
+def get_monthly_applications(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene la cantidad de entrevistas agrupadas por mes.
-    Aproximación definida en la Fase 4: utiliza application_date como proxy
-    para aplicaciones cuyo estado es una entrevista ('Recruiter Screen',
-    'Technical Interview', 'Final Interview').
+    Calcula la cantidad de postulaciones agrupadas cronológicamente por mes (YYYY-MM) usando Pandas.
     """
-    query = """
-    SELECT substr(application_date, 1, 7) as mes, COUNT(*) as total
-    FROM applications 
-    WHERE status IN ('Recruiter Screen', 'Technical Interview', 'Final Interview')
-      AND application_date IS NOT NULL AND application_date != ''
-    GROUP BY mes
-    ORDER BY mes ASC;
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return []
+
+    try:
+        df = pd.DataFrame(apps)
+        if "application_date" not in df.columns:
+            return []
+
+        valid_dates = df["application_date"].dropna().astype(str).str.strip()
+        valid_dates = valid_dates[valid_dates != ""]
+        if valid_dates.empty:
+            return []
+
+        months = valid_dates.str.slice(0, 7)
+        months = months[months.str.len() == 7]
+        if months.empty:
+            return []
+
+        monthly_counts = months.value_counts().sort_index()
+        return [{"mes": str(m), "total": int(cnt)} for m, cnt in monthly_counts.items()]
+    except Exception as e:
+        print(f"Error al calcular get_monthly_applications con pandas: {e}")
+        return []
+
+
+def get_monthly_interviews(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [{"mes": row[0], "total": row[1]} for row in cursor.fetchall()]
+    Calcula la cantidad de entrevistas agrupadas por mes usando Pandas.
+    """
+    apps = get_all_applications(user_id=user_id, client=client)
+    if not apps:
+        return []
+
+    try:
+        df = pd.DataFrame(apps)
+        if "application_date" not in df.columns or "status" not in df.columns:
+            return []
+
+        interview_statuses = ["Recruiter Screen", "Technical Interview", "Final Interview"]
+        df_interviews = df[df["status"].isin(interview_statuses)]
+        if df_interviews.empty:
+            return []
+
+        valid_dates = df_interviews["application_date"].dropna().astype(str).str.strip()
+        valid_dates = valid_dates[valid_dates != ""]
+        if valid_dates.empty:
+            return []
+
+        months = valid_dates.str.slice(0, 7)
+        months = months[months.str.len() == 7]
+        if months.empty:
+            return []
+
+        monthly_counts = months.value_counts().sort_index()
+        return [{"mes": str(m), "total": int(cnt)} for m, cnt in monthly_counts.items()]
+    except Exception as e:
+        print(f"Error al calcular get_monthly_interviews con pandas: {e}")
+        return []
 
 
 # ------------------------------------------------------------------------------
-# 8. OPERACIONES CRUD: USER PROFILE & USER SKILLS (Fase 5.1: My Profile)
+# 8. OPERACIONES CRUD: USER PROFILE (Fase 5.1 & Migración Supabase)
 # ------------------------------------------------------------------------------
+def get_supabase_client():
+    """
+    Obtiene o inicializa el cliente de Supabase guardado en st.session_state
+    para la sesión del usuario actual, asegurando que no sea un cliente global compartido.
+    """
+    try:
+        import streamlit as st
+        from supabase import create_client
+        if "supabase_client" not in st.session_state:
+            url = st.secrets["SUPABASE_URL"]
+            key = st.secrets["SUPABASE_KEY"]
+            st.session_state.supabase_client = create_client(url, key)
+        client = st.session_state.supabase_client
+        if "access_token" in st.session_state and st.session_state.access_token:
+            try:
+                client.postgrest.auth(st.session_state.access_token)
+            except Exception:
+                pass
+        return client
+    except Exception:
+        return None
+
+
+def get_current_user_id(client: Optional[Client] = None) -> Optional[str]:
+    """
+    Obtiene el user_id del usuario autenticado en la sesión actual de Streamlit o del cliente Supabase.
+    """
+    try:
+        import streamlit as st
+        user = getattr(st.session_state, "user", None)
+        if user:
+            u_id = getattr(user, "id", None)
+            if not u_id and isinstance(user, dict):
+                u_id = user.get("id")
+            if u_id:
+                return str(u_id)
+        if client:
+            try:
+                res = client.auth.get_user()
+                if res and res.user:
+                    return str(res.user.id)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
 def save_user_profile(
     full_name: Optional[str] = None,
     current_title: Optional[str] = None,
     email: Optional[str] = None,
     phone: Optional[str] = None,
     location: Optional[str] = None,
-    summary: Optional[str] = None
+    summary: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Any = None
 ) -> bool:
     """
-    Inserta o actualiza el perfil único del usuario (id=1) usando UPSERT.
+    Inserta o actualiza el perfil del usuario autenticado en Supabase.
+    Aplica filtro explícito por user_id además de RLS.
     """
-    query = """
-    INSERT INTO user_profile (id, full_name, current_title, email, phone, location, summary, updated_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-    ON CONFLICT(id) DO UPDATE SET
-        full_name = excluded.full_name,
-        current_title = excluded.current_title,
-        email = excluded.email,
-        phone = excluded.phone,
-        location = excluded.location,
-        summary = excluded.summary,
-        updated_at = datetime('now', 'localtime');
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (full_name, current_title, email, phone, location, summary))
-        conn.commit()
-        return True
+    from datetime import datetime, timezone
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "user_id": uid,
+        "full_name": full_name,
+        "current_title": current_title,
+        "email": email,
+        "phone": phone,
+        "location": location,
+        "summary": summary,
+        "updated_at": now_iso
+    }
+    try:
+        existing = (
+            sb.table("user_profile")
+            .select("id")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if existing and existing.data:
+            response = (
+                sb.table("user_profile")
+                .update(payload)
+                .eq("user_id", uid)
+                .execute()
+            )
+        else:
+            response = (
+                sb.table("user_profile")
+                .insert(payload)
+                .execute()
+            )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def get_user_profile() -> Optional[Dict[str, Any]]:
+def get_user_profile(user_id: Optional[str] = None, client: Any = None) -> Optional[Dict[str, Any]]:
     """
-    Obtiene la información del perfil del usuario (id=1).
+    Obtiene la información del perfil del usuario autenticado desde Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
-    query = "SELECT * FROM user_profile WHERE id = 1;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
-
-def get_user_preferred_language() -> Optional[str]:
-    """
-    Fase 6.1 (i18n): Obtiene la preferencia de idioma guardada del usuario ('es', 'en' o None).
-    """
-    query = "SELECT preferred_language FROM user_profile WHERE id = 1;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        row = cursor.fetchone()
-        if row and row["preferred_language"]:
-            return str(row["preferred_language"]).strip().lower()
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return None
+    sb = client or get_supabase_client()
+    if not sb:
+        return None
+    try:
+        response = (
+            sb.table("user_profile")
+            .select("*")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if response and response.data:
+            return dict(response.data)
+        return None
+    except Exception:
         return None
 
 
-def set_user_preferred_language(lang: str) -> bool:
+def get_user_preferred_language(user_id: Optional[str] = None, client: Any = None) -> Optional[str]:
     """
-    Fase 6.1 (i18n): Guarda o actualiza la preferencia de idioma del usuario ('es' o 'en') en user_profile.
-    Si la fila id=1 no existe aún, la crea con este valor inicial.
+    Obtiene la preferencia de idioma guardada ('es' o 'en') del usuario autenticado en Supabase.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
+    """
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return None
+    sb = client or get_supabase_client()
+    if not sb:
+        return None
+    try:
+        response = (
+            sb.table("user_profile")
+            .select("preferred_language")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if response and response.data and response.data.get("preferred_language"):
+            return str(response.data["preferred_language"]).strip().lower()
+        return None
+    except Exception:
+        return None
+
+
+def set_user_preferred_language(lang: str, user_id: Optional[str] = None, client: Any = None) -> bool:
+    """
+    Guarda o actualiza la preferencia de idioma ('es' o 'en') del usuario autenticado en Supabase.
+    Aplica filtro explícito por user_id además de RLS.
     """
     lang_clean = lang.strip().lower() if lang else "es"
-    query = """
-    INSERT INTO user_profile (id, preferred_language, updated_at)
-    VALUES (1, ?, datetime('now', 'localtime'))
-    ON CONFLICT(id) DO UPDATE SET
-        preferred_language = excluded.preferred_language,
-        updated_at = datetime('now', 'localtime');
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (lang_clean,))
-        conn.commit()
-        return True
+    from datetime import datetime, timezone
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        existing = (
+            sb.table("user_profile")
+            .select("id")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if existing and existing.data:
+            response = (
+                sb.table("user_profile")
+                .update({"preferred_language": lang_clean, "updated_at": now_iso})
+                .eq("user_id", uid)
+                .execute()
+            )
+        else:
+            response = (
+                sb.table("user_profile")
+                .insert({"user_id": uid, "preferred_language": lang_clean, "updated_at": now_iso})
+                .execute()
+            )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
 def add_user_skill(
     skill_name: str,
     category: str,
     source: str = "Manual",
-    proficiency: str = "Intermediate"
+    proficiency: str = "Intermediate",
+    user_id: Optional[str] = None,
+    client: Any = None
 ) -> bool:
     """
-    Agrega o actualiza una habilidad en el inventario del usuario.
-    Usa ON CONFLICT(skill_name) para actualizar la categoría y proficiency sin duplicar.
+    Agrega o actualiza una habilidad en el inventario del usuario en Supabase.
+    Compara en Python con .strip().lower() para evitar duplicados y actualizar
+    el nivel sin importar mayúsculas o minúsculas.
     """
-    query = """
-    INSERT INTO user_skills (skill_name, category, source, proficiency, date_added)
-    VALUES (?, ?, ?, ?, date('now'))
-    ON CONFLICT(skill_name) DO UPDATE SET
-        category = excluded.category,
-        proficiency = excluded.proficiency,
-        source = CASE WHEN excluded.source = 'Manual' THEN 'Manual' ELSE user_skills.source END;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (skill_name.strip(), category, source, proficiency))
-        conn.commit()
-        return True
+    clean_name = skill_name.strip()
+    if not clean_name:
+        return False
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+
+    try:
+        existing_skills = get_all_user_skills(user_id=uid, client=sb)
+        target_skill = None
+        for s in existing_skills:
+            if str(s.get("skill_name", "")).strip().lower() == clean_name.lower():
+                target_skill = s
+                break
+
+        if target_skill:
+            skill_id = target_skill["id"]
+            cat_to_save = category.strip() if category else target_skill.get("category", "General")
+            response = (
+                sb.table("user_skills")
+                .update({
+                    "proficiency": proficiency,
+                    "category": cat_to_save,
+                    "source": source
+                })
+                .eq("id", skill_id)
+                .eq("user_id", uid)
+                .execute()
+            )
+            try:
+                import streamlit as st
+                st.session_state[f"prof_{skill_id}"] = proficiency
+                st.session_state[f"cat_{skill_id}"] = cat_to_save
+            except Exception:
+                pass
+            return bool(response and response.data)
+        else:
+            payload = {
+                "user_id": uid,
+                "skill_name": clean_name,
+                "category": category.strip() if category else "General",
+                "source": source,
+                "proficiency": proficiency
+            }
+            response = (
+                sb.table("user_skills")
+                .insert(payload)
+                .execute()
+            )
+            return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def add_user_skills_bulk(skills: List[Dict[str, str]], source: str = "Resume") -> int:
+def add_user_skills_bulk(
+    skills: List[Dict[str, str]],
+    source: str = "Resume",
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> int:
     """
-    Inserta múltiples habilidades extraídas por la IA en una sola transacción.
-    Retorna la cantidad de habilidades procesadas.
+    Inserta o actualiza múltiples habilidades en Supabase en una sola operación upsert.
+    Usa on_conflict="user_id,skill_name" y retorna la cantidad de habilidades procesadas.
     """
-    insertados = 0
-    query = """
-    INSERT INTO user_skills (skill_name, category, source, proficiency, date_added)
-    VALUES (?, ?, ?, ?, date('now'))
-    ON CONFLICT(skill_name) DO UPDATE SET
-        category = excluded.category,
-        proficiency = excluded.proficiency;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for item in skills:
-            name = item.get("skill_name", "").strip()
-            cat = item.get("category", "DevOps")
-            prof = item.get("proficiency", "Intermediate")
-            if name:
-                cursor.execute(query, (name, cat, source, prof))
-                insertados += 1
-        conn.commit()
-    return insertados
+    if not skills:
+        return 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return 0
+    sb = client or get_supabase_client()
+    if not sb:
+        return 0
+
+    skills_map = {}
+    for item in skills:
+        name = item.get("skill_name", "").strip()
+        if name:
+            skills_map[name.lower()] = {
+                "user_id": uid,
+                "skill_name": name,
+                "category": item.get("category", "General").strip() or "General",
+                "source": source,
+                "proficiency": item.get("proficiency", "Intermediate")
+            }
+
+    if not skills_map:
+        return 0
+
+    records = list(skills_map.values())
+    try:
+        response = (
+            sb.table("user_skills")
+            .upsert(records, on_conflict="user_id,skill_name")
+            .execute()
+        )
+        if response and response.data:
+            return len(response.data)
+        return len(records)
+    except Exception:
+        return 0
 
 
-def get_all_user_skills() -> List[Dict[str, Any]]:
+def get_all_user_skills(user_id: Optional[str] = None, client: Any = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todas las habilidades del usuario ordenadas por categoría y nombre.
+    Obtiene todas las habilidades del usuario desde Supabase ordenadas por categoría y nombre.
+    Aplica filtro explícito .eq("user_id", user_id) además de RLS.
     """
-    query = "SELECT * FROM user_skills ORDER BY category ASC, skill_name ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return []
+    sb = client or get_supabase_client()
+    if not sb:
+        return []
+    try:
+        response = (
+            sb.table("user_skills")
+            .select("*")
+            .eq("user_id", uid)
+            .order("category", desc=False)
+            .order("skill_name", desc=False)
+            .execute()
+        )
+        if response and response.data:
+            return response.data
+        return []
+    except Exception:
+        return []
 
 
-def update_user_skill_proficiency(skill_id: int, new_proficiency: str) -> bool:
+def update_user_skill_proficiency(
+    skill_id: int,
+    new_proficiency: str,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Modifica el nivel de dominio (proficiency) de una habilidad existente.
+    Modifica el nivel de dominio (proficiency) de una habilidad existente en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "UPDATE user_skills SET proficiency = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_proficiency, skill_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .update({"proficiency": new_proficiency})
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-def update_user_skill_category(skill_id: int, new_category: str) -> bool:
+def update_user_skill_category(
+    skill_id: int,
+    new_category: str,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Modifica la categoría asignada a una habilidad existente.
+    Modifica la categoría asignada a una habilidad existente en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "UPDATE user_skills SET category = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (new_category, skill_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .update({"category": new_category.strip()})
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
-
-def delete_user_skill(skill_id: int) -> bool:
+def delete_user_skill(
+    skill_id: int,
+    user_id: Optional[str] = None,
+    client: Any = None
+) -> bool:
     """
-    Elimina una habilidad del perfil del usuario por su ID.
+    Elimina una habilidad del perfil del usuario por su ID en Supabase.
+    Aplica filtro explícito por user_id e id además de RLS.
     """
-    query = "DELETE FROM user_skills WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (skill_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    uid = user_id or get_current_user_id()
+    if not uid:
+        return False
+    sb = client or get_supabase_client()
+    if not sb:
+        return False
+    try:
+        response = (
+            sb.table("user_skills")
+            .delete()
+            .eq("id", skill_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(response and response.data)
+    except Exception:
+        return False
 
 
 # ==============================================================================
 # FASE 5.6a & 5.7: FUNCIONES PARA EXPERIENCIA, BULLETS Y EDUCACIÓN (CV BUILDER & RESUME PARSER)
 # ==============================================================================
 
-def seed_default_resume_bullets():
+def get_all_experiences(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Inserta experiencia, bullets y educación de ejemplo si experience_entries está vacía.
-    Permite probar el CV Builder de inmediato con datos realistas basados en el perfil del usuario.
+    Retorna todas las experiencias laborales registradas del usuario en Supabase,
+    ordenadas por order_index ascendente e id ascendente.
     """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM experience_entries;")
-            count = cursor.fetchone()[0]
-            if count == 0:
-                # 1. Experiencia 1
-                cursor.execute(
-                    """
-                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                    """,
-                    ("NTT Data / Citibank", "Unix L3 Senior Systems Administrator", "2021-06", None, 1, 1)
-                )
-                exp1_id = cursor.lastrowid
-
-                bullets_exp1 = [
-                    (
-                        exp1_id,
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        "Administré y di soporte a infraestructura de servidores Unix/Linux Red Hat y Solaris para plataformas bancarias de misión crítica.",
-                        1
-                    ),
-                    (
-                        exp1_id,
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        "Automaticé tareas operativas de mantenimiento y parches de seguridad utilizando scripts en Bash y Python.",
-                        2
-                    ),
-                    (
-                        exp1_id,
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        "Atendí y resolví incidentes críticos de producción de nivel 3 coordinando cambios con SLA superior al 99.9%.",
-                        3
-                    )
-                ]
-                cursor.executemany(
-                    """
-                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    bullets_exp1
-                )
-
-                # 2. Experiencia 2
-                cursor.execute(
-                    """
-                    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                    """,
-                    ("Experiencia Previa", "Senior Linux & Infrastructure Specialist", "2018-01", "2021-05", 0, 2)
-                )
-                exp2_id = cursor.lastrowid
-
-                bullets_exp2 = [
-                    (
-                        exp2_id,
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        "Realicé monitoreo proactivo del rendimiento del sistema operativo y optimización de recursos de cómputo y almacenamiento.",
-                        1
-                    ),
-                    (
-                        exp2_id,
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        "Configuré e implementé contenedores Docker y servicios web Apache y Nginx en entornos corporativos de alta disponibilidad.",
-                        2
-                    )
-                ]
-                cursor.executemany(
-                    """
-                    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    bullets_exp2
-                )
-
-                # 3. Educación de ejemplo
-                cursor.execute("SELECT COUNT(*) FROM education_entries;")
-                count_edu = cursor.fetchone()[0]
-                if count_edu == 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-                        VALUES (?, ?, ?, ?, ?);
-                        """,
-                        ("Universidad Técnica / Instituto Tecnológico", "Ingeniería en Sistemas / Computación", "2013-01", "2017-12", 1)
-                    )
-
-                conn.commit()
+        res = (
+            client.table("experience_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
     except Exception as e:
-        print(f"Aviso al sembrar resume_bullets: {e}")
-
-
-# ------------------------------------------------------------------------------
-# EXPERIENCIA LABORAL (experience_entries)
-# ------------------------------------------------------------------------------
-
-def get_all_experiences() -> List[Dict[str, Any]]:
-    """
-    Retorna todas las experiencias laborales registradas ordenadas por order_index e id.
-    """
-    query = "SELECT * FROM experience_entries ORDER BY order_index ASC, id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+        print(f"Error al obtener experiencias en Supabase: {e}")
+        return []
 
 
 def add_experience_entry(
@@ -1001,23 +1155,36 @@ def add_experience_entry(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     is_current: bool = False,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta una nueva experiencia laboral estructurada y retorna su ID generado.
+    Inserta una nueva experiencia laboral estructurada en Supabase y retorna su ID generado.
     """
-    query = """
-    INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-    VALUES (?, ?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            query,
-            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, order_index)
-        )
-        conn.commit()
-        return cursor.lastrowid or 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_experience_entry: no hay cliente o usuario autenticado")
+        return 0
+
+    payload = {
+        "user_id": uid,
+        "company": company.strip(),
+        "position": position.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_current": bool(is_current),
+        "order_index": order_index
+    }
+    try:
+        res = client.table("experience_entries").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar experiencia laboral en Supabase: {e}")
+        return 0
 
 
 def update_experience_entry(
@@ -1026,86 +1193,163 @@ def update_experience_entry(
     position: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    is_current: bool = False
+    is_current: bool = False,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza los datos de una experiencia laboral.
+    Actualiza los datos de una experiencia laboral en Supabase, acotado al usuario activo.
     """
-    query = """
-    UPDATE experience_entries
-    SET company = ?, position = ?, start_date = ?, end_date = ?, is_current = ?
-    WHERE id = ?;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            query,
-            (company.strip(), position.strip(), start_date, end_date, 1 if is_current else 0, experience_id)
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_experience_entry: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "company": company.strip(),
+        "position": position.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_current": bool(is_current)
+    }
+    try:
+        res = (
+            client.table("experience_entries")
+            .update(payload)
+            .eq("id", experience_id)
+            .eq("user_id", uid)
+            .execute()
         )
-        conn.commit()
-        return cursor.rowcount > 0
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar experiencia laboral en Supabase: {e}")
+        return False
 
 
-def delete_experience_entry(experience_id: int) -> bool:
+def delete_experience_entry(
+    experience_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina una experiencia laboral y en cascada todos sus bullets asociados.
+    Elimina una experiencia laboral y en cascada todos sus bullets asociados en Supabase,
+    acotado al usuario activo.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON;")
-        cursor.execute("DELETE FROM resume_bullets WHERE experience_id = ?;", (experience_id,))
-        cursor.execute("DELETE FROM experience_entries WHERE id = ?;", (experience_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_experience_entry: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        client.table("resume_bullets").delete().eq("experience_id", experience_id).eq("user_id", uid).execute()
+        res = client.table("experience_entries").delete().eq("id", experience_id).eq("user_id", uid).execute()
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar experiencia laboral en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
 # BULLETS DE LOGROS (resume_bullets)
 # ------------------------------------------------------------------------------
 
-def get_all_resume_bullets() -> List[Dict[str, Any]]:
+def get_all_resume_bullets(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todos los bullets del CV ordenados por la experiencia correspondiente y order_index.
+    Obtiene todos los bullets del CV en Supabase ordenados por la experiencia correspondiente y order_index.
     Para compatibilidad hacia atrás y soporte del CV Builder, sintetiza el campo 'section'
     como 'position - company' e incluye company, position y fechas.
     """
-    query = """
-    SELECT 
-        b.id,
-        b.experience_id,
-        (e.position || ' - ' || e.company) AS section,
-        e.company,
-        e.position,
-        e.start_date,
-        e.end_date,
-        e.is_current,
-        b.bullet_text,
-        b.original_text,
-        b.current_text,
-        b.order_index
-    FROM resume_bullets b
-    JOIN experience_entries e ON b.experience_id = e.id
-    ORDER BY e.order_index ASC, e.id ASC, b.order_index ASC, b.id ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        exps = (
+            client.table("experience_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+            .data or []
+        )
+        if not exps:
+            return []
+
+        bullets = (
+            client.table("resume_bullets")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+            .data or []
+        )
+
+        exp_map = {e["id"]: e for e in exps}
+        joined_results = []
+        for b in bullets:
+            exp = exp_map.get(b.get("experience_id"))
+            if exp:
+                pos = exp.get("position") or ""
+                comp = exp.get("company") or ""
+                joined_results.append({
+                    "id": b.get("id"),
+                    "experience_id": b.get("experience_id"),
+                    "section": f"{pos} - {comp}".strip(" -"),
+                    "company": comp,
+                    "position": pos,
+                    "start_date": exp.get("start_date"),
+                    "end_date": exp.get("end_date"),
+                    "is_current": exp.get("is_current"),
+                    "bullet_text": b.get("bullet_text"),
+                    "original_text": b.get("original_text"),
+                    "current_text": b.get("current_text"),
+                    "order_index": b.get("order_index", 0),
+                    "_exp_order": exp.get("order_index", 0),
+                    "_exp_id": exp.get("id", 0)
+                })
+
+        joined_results.sort(key=lambda x: (x["_exp_order"], x["_exp_id"], x["order_index"], x["id"]))
+        for r in joined_results:
+            r.pop("_exp_order", None)
+            r.pop("_exp_id", None)
+        return joined_results
+    except Exception as e:
+        print(f"Error al obtener todos los resume bullets en Supabase: {e}")
+        return []
 
 
-def get_bullets_by_experience(experience_id: int) -> List[Dict[str, Any]]:
+def get_bullets_by_experience(
+    experience_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> List[Dict[str, Any]]:
     """
-    Obtiene los bullets de una experiencia específica.
+    Obtiene los bullets de una experiencia específica en Supabase, acotado al usuario activo.
     """
-    query = """
-    SELECT * FROM resume_bullets
-    WHERE experience_id = ?
-    ORDER BY order_index ASC, id ASC;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (experience_id,))
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        res = (
+            client.table("resume_bullets")
+            .select("*")
+            .eq("experience_id", experience_id)
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener bullets de experiencia en Supabase: {e}")
+        return []
 
 
 def add_resume_bullet(
@@ -1113,62 +1357,128 @@ def add_resume_bullet(
     bullet_text: str,
     original_text: Optional[str] = None,
     current_text: Optional[str] = None,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta un nuevo bullet asociado a una experiencia laboral.
+    Inserta un nuevo bullet asociado a una experiencia laboral en Supabase y retorna su ID.
     """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_resume_bullet: no hay cliente o usuario autenticado")
+        return 0
+
     b_txt = bullet_text.strip()
     orig = (original_text or b_txt).strip()
     curr = (current_text or b_txt).strip()
-    query = """
-    INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-    VALUES (?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (experience_id, b_txt, orig, curr, order_index))
-        conn.commit()
-        return cursor.lastrowid or 0
+    payload = {
+        "user_id": uid,
+        "experience_id": experience_id,
+        "bullet_text": b_txt,
+        "original_text": orig,
+        "current_text": curr,
+        "order_index": order_index
+    }
+    try:
+        res = client.table("resume_bullets").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar resume bullet en Supabase: {e}")
+        return 0
 
 
-def update_resume_bullet(bullet_id: int, current_text: str) -> bool:
+def update_resume_bullet(
+    bullet_id: int,
+    current_text: str,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Actualiza el texto actual (current_text) de un bullet específico tras ser aceptado por el usuario.
+    Actualiza el texto actual (current_text y bullet_text) de un bullet en Supabase, acotado al usuario.
     """
-    query = "UPDATE resume_bullets SET current_text = ?, bullet_text = ? WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (current_text.strip(), current_text.strip(), bullet_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_resume_bullet: no hay cliente o usuario autenticado")
+        return False
+
+    clean_text = current_text.strip()
+    payload = {
+        "current_text": clean_text,
+        "bullet_text": clean_text
+    }
+    try:
+        res = (
+            client.table("resume_bullets")
+            .update(payload)
+            .eq("id", bullet_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar resume bullet en Supabase: {e}")
+        return False
 
 
-def delete_resume_bullet(bullet_id: int) -> bool:
+def delete_resume_bullet(
+    bullet_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina un bullet del CV por su ID.
+    Elimina un bullet del CV por su ID en Supabase, acotado al usuario.
     """
-    query = "DELETE FROM resume_bullets WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (bullet_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_resume_bullet: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("resume_bullets")
+            .delete()
+            .eq("id", bullet_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar resume bullet en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
 # EDUCACIÓN Y CERTIFICACIONES (education_entries)
 # ------------------------------------------------------------------------------
 
-def get_all_education() -> List[Dict[str, Any]]:
+def get_all_education(user_id: Optional[str] = None, client: Optional[Client] = None) -> List[Dict[str, Any]]:
     """
-    Obtiene todos los registros de educación y certificaciones.
+    Obtiene todos los registros de educación y certificaciones en Supabase para el usuario activo.
     """
-    query = "SELECT * FROM education_entries ORDER BY order_index ASC, id ASC;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return []
+
+    try:
+        res = (
+            client.table("education_entries")
+            .select("*")
+            .eq("user_id", uid)
+            .order("order_index", desc=False)
+            .order("id", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Error al obtener educación en Supabase: {e}")
+        return []
 
 
 def add_education_entry(
@@ -1176,20 +1486,35 @@ def add_education_entry(
     credential: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    order_index: int = 0
+    order_index: int = 0,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> int:
     """
-    Inserta un registro de educación o certificación.
+    Inserta un registro de educación o certificación en Supabase para el usuario activo y retorna su ID.
     """
-    query = """
-    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-    VALUES (?, ?, ?, ?, ?);
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, order_index))
-        conn.commit()
-        return cursor.lastrowid or 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en add_education_entry: no hay cliente o usuario autenticado")
+        return 0
+
+    payload = {
+        "user_id": uid,
+        "institution": institution.strip(),
+        "credential": credential.strip(),
+        "start_date": start_date,
+        "end_date": end_date,
+        "order_index": order_index
+    }
+    try:
+        res = client.table("education_entries").insert(payload).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0].get("id", 0)
+        return 0
+    except Exception as e:
+        print(f"Error al agregar educación en Supabase: {e}")
+        return 0
 
 
 def update_education_entry(
@@ -1197,33 +1522,65 @@ def update_education_entry(
     institution: str,
     credential: str,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Actualiza un registro de educación.
+    Actualiza un registro de educación en Supabase acotado al usuario activo.
     """
-    query = """
-    UPDATE education_entries
-    SET institution = ?, credential = ?, start_date = ?, end_date = ?
-    WHERE id = ?;
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (institution.strip(), credential.strip(), start_date, end_date, education_id))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en update_education_entry: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "institution": institution.strip(),
+        "credential": credential.strip(),
+        "start_date": start_date,
+        "end_date": end_date
+    }
+    try:
+        res = (
+            client.table("education_entries")
+            .update(payload)
+            .eq("id", education_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al actualizar educación en Supabase: {e}")
+        return False
 
 
-def delete_education_entry(education_id: int) -> bool:
+def delete_education_entry(
+    education_id: int,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Elimina un registro de educación por su ID.
+    Elimina un registro de educación en Supabase por su ID, acotado al usuario activo.
     """
-    query = "DELETE FROM education_entries WHERE id = ?;"
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, (education_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en delete_education_entry: no hay cliente o usuario autenticado")
+        return False
+
+    try:
+        res = (
+            client.table("education_entries")
+            .delete()
+            .eq("id", education_id)
+            .eq("user_id", uid)
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al eliminar educación en Supabase: {e}")
+        return False
 
 
 # ------------------------------------------------------------------------------
@@ -1233,50 +1590,80 @@ def delete_education_entry(education_id: int) -> bool:
 def save_parsed_resume_data(
     experience_list: List[Dict[str, Any]],
     education_list: List[Dict[str, Any]],
-    replace_existing: bool = True
+    replace_existing: bool = True,
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
 ) -> bool:
     """
-    Persiste en una sola transacción limpia los datos de experiencia laboral,
-    sus bullets asociados y la educación extraída y confirmada por el usuario.
+    Persiste en Supabase los datos de experiencia laboral, sus bullets asociados y la
+    educación extraída y confirmada por el usuario.
+    Regla: Inserta primero lo nuevo y borra lo viejo solo si todas las inserciones
+    fueron exitosas, siempre acotado al user_id activo. Si falla, hace rollback de lo
+    recién insertado y conserva lo viejo.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        if replace_existing:
-            cursor.execute("DELETE FROM resume_bullets;")
-            cursor.execute("DELETE FROM experience_entries;")
-            cursor.execute("DELETE FROM education_entries;")
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en save_parsed_resume_data: no hay cliente o usuario autenticado")
+        return False
 
-        # Inserción de experiencia y bullets
+    inserted_exp_ids: List[int] = []
+    inserted_bullet_ids: List[int] = []
+    inserted_edu_ids: List[int] = []
+
+    try:
+        # 1. Si se va a reemplazar lo existente, identificamos los IDs anteriores para borrarlos al final
+        old_exp_ids: List[int] = []
+        old_edu_ids: List[int] = []
+        if replace_existing:
+            old_exp_res = client.table("experience_entries").select("id").eq("user_id", uid).execute()
+            old_exp_ids = [row["id"] for row in (old_exp_res.data or []) if "id" in row]
+
+            old_edu_res = client.table("education_entries").select("id").eq("user_id", uid).execute()
+            old_edu_ids = [row["id"] for row in (old_edu_res.data or []) if "id" in row]
+
+        # 2. Inserción de nuevas experiencias y sus viñetas
         for idx_exp, exp in enumerate(experience_list, start=1):
             comp = str(exp.get("company", "Empresa")).strip()
             pos = str(exp.get("position", "Puesto")).strip()
             s_date = exp.get("start_date")
             e_date = exp.get("end_date")
-            is_cur = 1 if exp.get("is_current") else 0
+            is_cur = bool(exp.get("is_current"))
             order_idx = exp.get("order_index", idx_exp)
 
-            cursor.execute(
-                """
-                INSERT INTO experience_entries (company, position, start_date, end_date, is_current, order_index)
-                VALUES (?, ?, ?, ?, ?, ?);
-                """,
-                (comp, pos, s_date, e_date, is_cur, order_idx)
-            )
-            exp_id = cursor.lastrowid
+            exp_payload = {
+                "user_id": uid,
+                "company": comp,
+                "position": pos,
+                "start_date": s_date,
+                "end_date": e_date,
+                "is_current": is_cur,
+                "order_index": order_idx
+            }
+            exp_res = client.table("experience_entries").insert(exp_payload).execute()
+            if not exp_res.data or len(exp_res.data) == 0:
+                raise RuntimeError(f"Fallo al insertar experiencia: {comp} - {pos}")
+
+            new_exp_id = exp_res.data[0]["id"]
+            inserted_exp_ids.append(new_exp_id)
 
             bullets = exp.get("bullets", [])
             for idx_b, b_text in enumerate(bullets, start=1):
                 clean_b = str(b_text).strip()
                 if clean_b:
-                    cursor.execute(
-                        """
-                        INSERT INTO resume_bullets (experience_id, bullet_text, original_text, current_text, order_index)
-                        VALUES (?, ?, ?, ?, ?);
-                        """,
-                        (exp_id, clean_b, clean_b, clean_b, idx_b)
-                    )
+                    b_payload = {
+                        "user_id": uid,
+                        "experience_id": new_exp_id,
+                        "bullet_text": clean_b,
+                        "original_text": clean_b,
+                        "current_text": clean_b,
+                        "order_index": idx_b
+                    }
+                    b_res = client.table("resume_bullets").insert(b_payload).execute()
+                    if b_res.data and len(b_res.data) > 0:
+                        inserted_bullet_ids.append(b_res.data[0]["id"])
 
-        # Inserción de educación
+        # 3. Inserción de nueva educación
         for idx_edu, edu in enumerate(education_list, start=1):
             inst = str(edu.get("institution", "Institución")).strip()
             cred = str(edu.get("credential", "Título / Certificación")).strip()
@@ -1285,119 +1672,348 @@ def save_parsed_resume_data(
             order_idx = edu.get("order_index", idx_edu)
 
             if inst or cred:
-                cursor.execute(
-                    """
-                    INSERT INTO education_entries (institution, credential, start_date, end_date, order_index)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    (inst, cred, s_date, e_date, order_idx)
-                )
+                edu_payload = {
+                    "user_id": uid,
+                    "institution": inst,
+                    "credential": cred,
+                    "start_date": s_date,
+                    "end_date": e_date,
+                    "order_index": order_idx
+                }
+                edu_res = client.table("education_entries").insert(edu_payload).execute()
+                if not edu_res.data or len(edu_res.data) == 0:
+                    raise RuntimeError(f"Fallo al insertar educación: {inst} - {cred}")
+                inserted_edu_ids.append(edu_res.data[0]["id"])
 
-        conn.commit()
+        # 4. Todo salió bien: si replace_existing es True, borramos lo viejo acotado a user_id
+        if replace_existing:
+            if old_exp_ids:
+                client.table("resume_bullets").delete().eq("user_id", uid).in_("experience_id", old_exp_ids).execute()
+                client.table("experience_entries").delete().eq("user_id", uid).in_("id", old_exp_ids).execute()
+            if old_edu_ids:
+                client.table("education_entries").delete().eq("user_id", uid).in_("id", old_edu_ids).execute()
+
         return True
 
+    except Exception as e:
+        print(f"Error en save_parsed_resume_data: {e}")
+        # Rollback de lo recién insertado para no dejar datos corruptos o duplicados
+        try:
+            if inserted_bullet_ids:
+                client.table("resume_bullets").delete().eq("user_id", uid).in_("id", inserted_bullet_ids).execute()
+            if inserted_exp_ids:
+                client.table("experience_entries").delete().eq("user_id", uid).in_("id", inserted_exp_ids).execute()
+            if inserted_edu_ids:
+                client.table("education_entries").delete().eq("user_id", uid).in_("id", inserted_edu_ids).execute()
+        except Exception as rb_err:
+            print(f"Error durante rollback de inserción: {rb_err}")
+        return False
 
 
 # ------------------------------------------------------------------------------
-# GESTIÓN DE SESIONES PERSISTENTES (4 HORAS)
+# BORRADOR DE TRABAJO DE CV IMPROVER (cv_improver_drafts)
 # ------------------------------------------------------------------------------
-def save_auth_session(session_id: str, user_id: str, user_email: str, access_token: str, refresh_token: str, hours: int = 4) -> None:
+
+def save_cv_improver_draft(
+    draft_data: Dict[str, Any],
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
     """
-    Guarda o actualiza una sesión de usuario con expiración de 4 horas.
+    Guarda o actualiza el borrador de trabajo en curso del usuario para Mejorar CV en Supabase.
     """
-    from datetime import datetime, timedelta
-    now = datetime.now()
-    expires_at = now + timedelta(hours=hours)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO auth_sessions (
-                session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (
-            session_id,
-            user_id,
-            user_email,
-            access_token,
-            refresh_token,
-            now.isoformat(),
-            expires_at.isoformat()
-        ))
-        conn.commit()
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        print("Error en save_cv_improver_draft: no hay cliente o usuario autenticado")
+        return False
+
+    payload = {
+        "user_id": uid,
+        "draft_data": draft_data
+    }
+    try:
+        res = (
+            client.table("cv_improver_drafts")
+            .upsert(payload, on_conflict="user_id")
+            .execute()
+        )
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        print(f"Error al guardar borrador de CV Improver en Supabase: {e}")
+        return False
+
+
+def get_cv_improver_draft(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene el borrador de trabajo en curso del usuario para Mejorar CV desde Supabase.
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return None
+
+    try:
+        res = (
+            client.table("cv_improver_drafts")
+            .select("draft_data")
+            .eq("user_id", uid)
+            .maybe_single()
+            .execute()
+        )
+        if res.data and "draft_data" in res.data:
+            return res.data["draft_data"]
+        return None
+    except Exception as e:
+        print(f"Error al obtener borrador de CV Improver en Supabase: {e}")
+        return None
+
+
+def delete_cv_improver_draft(
+    user_id: Optional[str] = None,
+    client: Optional[Client] = None
+) -> bool:
+    """
+    Elimina el borrador de trabajo de Mejorar CV del usuario en Supabase.
+    """
+    client = client or get_supabase_client()
+    uid = user_id or get_current_user_id(client)
+    if not client or not uid:
+        return False
+
+    try:
+        client.table("cv_improver_drafts").delete().eq("user_id", uid).execute()
+        return True
+    except Exception as e:
+        print(f"Error al eliminar borrador de CV Improver en Supabase: {e}")
+        return False
+
+
+
+
+# ------------------------------------------------------------------------------
+# GESTIÓN DE SESIONES PERSISTENTES SEGURA (auth_sessions en Supabase vía service_role)
+# ------------------------------------------------------------------------------
+def _get_service_role_client() -> Optional[Client]:
+    """
+    Crea un cliente de Supabase usando SUPABASE_SERVICE_ROLE_KEY exclusivamente
+    para la gestión de la tabla auth_sessions en el servidor.
+    NUNCA se guarda en st.session_state ni se usa para sign_in ni operaciones de usuario.
+    """
+    try:
+        import streamlit as st
+        from supabase import create_client
+        url = st.secrets.get("SUPABASE_URL")
+        service_key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not url or not service_key:
+            return None
+        return create_client(url, service_key)
+    except Exception as e:
+        print(f"Error al inicializar cliente service_role de Supabase: {e}")
+        return None
+
+
+def _hash_session_id(session_id: str) -> str:
+    """
+    Calcula el hash SHA-256 del session_id.
+    El session_id en texto claro jamás se almacena en la base de datos.
+    """
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+
+
+def _get_fernet_cipher() -> Optional[Fernet]:
+    """
+    Obtiene la instancia de cifrado Fernet usando SESSION_ENCRYPTION_KEY de secrets.
+    """
+    try:
+        import streamlit as st
+        enc_key = st.secrets.get("SESSION_ENCRYPTION_KEY")
+        if not enc_key:
+            return None
+        return Fernet(enc_key.encode("utf-8") if isinstance(enc_key, str) else enc_key)
+    except Exception as e:
+        print(f"Error al inicializar cifrador Fernet: {e}")
+        return None
+
+
+def _encrypt_refresh_token(refresh_token: str) -> Optional[str]:
+    """
+    Cifra simétricamente el refresh_token con Fernet.
+    """
+    cipher = _get_fernet_cipher()
+    if not cipher or not refresh_token:
+        return None
+    try:
+        return cipher.encrypt(refresh_token.encode("utf-8")).decode("utf-8")
+    except Exception as e:
+        print(f"Error al cifrar refresh token: {e}")
+        return None
+
+
+def _decrypt_refresh_token(encrypted_token: str) -> Optional[str]:
+    """
+    Descifra el refresh_token con Fernet.
+    """
+    cipher = _get_fernet_cipher()
+    if not cipher or not encrypted_token:
+        return None
+    try:
+        return cipher.decrypt(encrypted_token.encode("utf-8")).decode("utf-8")
+    except Exception as e:
+        print(f"Error al descifrar refresh token: {e}")
+        return None
+
+
+def save_auth_session(
+    session_id: str,
+    user_id: str,
+    user_email: str,
+    refresh_token: str,
+    access_token: Optional[str] = None,
+    hours: int = 4
+) -> bool:
+    """
+    Guarda la sesión persistente en Supabase (auth_sessions) usando service_role.
+    - session_id se almacena como hash SHA-256.
+    - refresh_token se almacena cifrado con Fernet.
+    - No se guarda el access_token en la base de datos.
+    """
+    client = _get_service_role_client()
+    if not client:
+        return False
+
+    enc_rt = _encrypt_refresh_token(refresh_token)
+    if not enc_rt:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+    try:
+        client.table("auth_sessions").upsert({
+            "session_id_hash": sid_hash,
+            "user_id": str(user_id),
+            "user_email": str(user_email),
+            "encrypted_refresh_token": enc_rt,
+            "expires_at": expires_at.isoformat()
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"Error en save_auth_session (service_role): {e}")
+        return False
 
 
 def get_auth_session(session_id: str) -> Optional[Dict[str, Any]]:
     """
-    Obtiene la sesión si existe y no ha expirado. Si expiró, la elimina automáticamente.
+    Recupera una sesión activa por el session_id usando service_role.
+    Valida la expiración de 4 horas y descifra el refresh_token con Fernet.
     """
-    from datetime import datetime
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT session_id, user_id, user_email, access_token, refresh_token, created_at, expires_at
-            FROM auth_sessions
-            WHERE session_id = ?;
-        """, (session_id,))
-        row = cursor.fetchone()
-        if not row:
+    client = _get_service_role_client()
+    if not client:
+        return None
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        res = (
+            client.table("auth_sessions")
+            .select("*")
+            .eq("session_id_hash", sid_hash)
+            .limit(1)
+            .execute()
+        )
+        if not res.data or len(res.data) == 0:
             return None
-        expires_at_str = row["expires_at"]
-        try:
-            exp_dt = datetime.fromisoformat(expires_at_str)
-            if datetime.now() > exp_dt:
-                cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
-                conn.commit()
+
+        record = res.data[0]
+        exp_str = record.get("expires_at")
+        if exp_str:
+            exp_dt = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) >= exp_dt:
+                delete_auth_session(session_id)
                 return None
-        except Exception:
+
+        raw_rt = _decrypt_refresh_token(record.get("encrypted_refresh_token", ""))
+        if not raw_rt:
             return None
-        return dict(row)
+
+        return {
+            "session_id": session_id,
+            "user_id": record.get("user_id"),
+            "user_email": record.get("user_email"),
+            "refresh_token": raw_rt,
+            "expires_at": exp_str
+        }
+    except Exception as e:
+        print(f"Error en get_auth_session (service_role): {e}")
+        return None
 
 
-def update_auth_session_tokens(session_id: str, access_token: str, refresh_token: str) -> None:
+def update_auth_session_tokens(
+    session_id: str,
+    token_or_access: str,
+    refresh_token: Optional[str] = None
+) -> bool:
     """
-    Actualiza los tokens de acceso y refresco de una sesión existente.
+    Actualiza el refresh_token cifrado tras la rotación de Supabase.
+    Acepta update_auth_session_tokens(session_id, refresh_token)
+    y update_auth_session_tokens(session_id, access_token, refresh_token) por compatibilidad.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE auth_sessions
-            SET access_token = ?, refresh_token = ?
-            WHERE session_id = ?;
-        """, (access_token, refresh_token, session_id))
-        conn.commit()
+    actual_rt = refresh_token if refresh_token is not None else token_or_access
+    client = _get_service_role_client()
+    if not client or not actual_rt:
+        return False
+
+    enc_rt = _encrypt_refresh_token(actual_rt)
+    if not enc_rt:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        client.table("auth_sessions").update({
+            "encrypted_refresh_token": enc_rt
+        }).eq("session_id_hash", sid_hash).execute()
+        return True
+    except Exception as e:
+        print(f"Error en update_auth_session_tokens (service_role): {e}")
+        return False
 
 
-def delete_auth_session(session_id: str) -> None:
+def delete_auth_session(session_id: str) -> bool:
     """
-    Elimina una sesión activa (por ejemplo, al hacer logout).
+    Elimina una sesión activa de auth_sessions mediante el hash del session_id.
     """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM auth_sessions WHERE session_id = ?;", (session_id,))
-        conn.commit()
+    client = _get_service_role_client()
+    if not client:
+        return False
+
+    sid_hash = _hash_session_id(session_id)
+    try:
+        client.table("auth_sessions").delete().eq("session_id_hash", sid_hash).execute()
+        return True
+    except Exception as e:
+        print(f"Error en delete_auth_session (service_role): {e}")
+        return False
 
 
 def cleanup_expired_sessions() -> None:
     """
-    Limpia todas las sesiones expiradas en la base de datos.
+    Limpia todas las sesiones expiradas en auth_sessions usando service_role.
     """
-    from datetime import datetime
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            DELETE FROM auth_sessions
-            WHERE expires_at < ?;
-        """, (datetime.now().isoformat(),))
-        conn.commit()
+    client = _get_service_role_client()
+    if not client:
+        return
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        client.table("auth_sessions").delete().lt("expires_at", now_iso).execute()
+    except Exception as e:
+        print(f"Error en cleanup_expired_sessions (service_role): {e}")
 
 
 
 if __name__ == "__main__":
-    print("Inicializando base de datos y creando tablas...")
-    create_tables()
-    print("¡Tablas creadas exitosamente!")
-    
+    print("Verificando conexión con Supabase...")
     apps_actuales = get_all_applications()
-    print(f"Total de aplicaciones en base de datos: {len(apps_actuales)}")
-
+    print(f"Total de aplicaciones en Supabase: {len(apps_actuales)}")

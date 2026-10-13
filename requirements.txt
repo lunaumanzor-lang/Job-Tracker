@@ -19,6 +19,9 @@ beautifulsoup4>=4.12.0
 # Base de datos en la nube (Supabase)
 supabase>=2.0.0
 
+# Seguridad y Criptografía (Persistencia de Sesión Segura Fernet / SHA-256)
+cryptography>=42.0.0
+
 # Fase 5.6c: Generación y exportación de CV a PDF (ATS-friendly)
 xhtml2pdf>=0.2.16
 jinja2>=3.1.4
