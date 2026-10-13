@@ -344,11 +344,25 @@ def login_screen():
             signup_submit = st.form_submit_button("Registrarse", use_container_width=True)
 
             if signup_submit:
-                try:
-                    res = supabase.auth.sign_up({"email": new_email, "password": new_password})
-                    st.success("¡Cuenta creada exitosamente! Ya puedes iniciar sesión en la pestaña 'Iniciar Sesión'.")
-                except Exception as e:
-                    st.error(f"Error al registrar: {e}")
+                if not new_email.strip() or not new_password.strip():
+                    st.warning("Por favor completa el correo electrónico y la contraseña.")
+                else:
+                    try:
+                        res = supabase.auth.sign_up({
+                            "email": new_email.strip(),
+                            "password": new_password.strip(),
+                            "options": {
+                                "email_redirect_to": "http://localhost:8501"
+                            }
+                        })
+                        st.success(
+                            f"📧 **¡Cuenta creada exitosamente!**\n\n"
+                            f"Hemos enviado un correo de confirmación a **{new_email.strip()}**.\n\n"
+                            "⚠️ **Paso requerido para entrar:** Debes abrir tu correo y hacer clic en el enlace "
+                            "para confirmar y activar tu cuenta antes de poder iniciar sesión (si no lo ves, revisa tu carpeta de spam o correo no deseado)."
+                        )
+                    except Exception as e:
+                        st.error(f"Error al registrar: {e}")
 
     with tab3:
         st.markdown("### 🔑 Recuperar Contraseña con Código de Seguridad")
