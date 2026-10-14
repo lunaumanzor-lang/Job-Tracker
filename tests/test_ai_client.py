@@ -120,8 +120,18 @@ def test_404_503_immediate_model_jump():
 
 
 def test_api_key_resolution():
-    with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key", "ANTHROPIC_API_KEY": "env-claude-key"}):
-        k_g = get_ai_api_key("gemini")
-        k_a = get_ai_api_key("anthropic")
-        assert k_g == "env-gemini-key"
-        assert k_a == "env-claude-key"
+    # 1. Probar fallback a os.getenv cuando st.secrets no contiene la clave
+    with patch("ai_client.st", None):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key", "ANTHROPIC_API_KEY": "env-claude-key"}):
+            k_g = get_ai_api_key("gemini")
+            k_a = get_ai_api_key("anthropic")
+            assert k_g == "env-gemini-key"
+            assert k_a == "env-claude-key"
+
+    # 2. Probar prioridad de st.secrets sobre os.getenv
+    mock_secrets = {"GEMINI_API_KEY": "secret-gemini-key", "ANTHROPIC_API_KEY": "secret-claude-key"}
+    with patch("ai_client.st") as mock_st:
+        mock_st.secrets = mock_secrets
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key"}):
+            assert get_ai_api_key("gemini") == "secret-gemini-key"
+            assert get_ai_api_key("anthropic") == "secret-claude-key"
