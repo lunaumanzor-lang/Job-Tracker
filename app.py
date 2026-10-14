@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: SmartCV
 # FASE 3: Application Tracker con Streamlit (app.py)
 # ==============================================================================
 
@@ -99,7 +99,7 @@ from pdf_generator import generate_resume_pdf
 # CONFIGURACIÓN DE PÁGINA
 # ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="AI Job Application Tracker",
+    page_title="SmartCV",
     page_icon="💼",
     layout="wide"  # 'wide' aprovecha mejor el ancho de la pantalla para tablas y formularios
 )
@@ -298,7 +298,7 @@ if st.session_state.get("user") is not None and "access_token" in st.session_sta
 
 # 3. Crear la pantalla de Login y Registro
 def login_screen():
-    st.title("💼 AI Job Application Tracker")
+    st.title("💼 SmartCV")
     st.subheader("Acceso a la plataforma")
 
     if st.session_state.get("session_expired_notice"):
@@ -540,7 +540,7 @@ elif "error_description" in st.query_params or "error" in st.query_params:
 
 # Pantalla de creación de nueva contraseña tras el enlace de recuperación
 def set_new_password_screen():
-    st.title("💼 AI Job Application Tracker")
+    st.title("💼 SmartCV")
     st.subheader("🔑 Establecer nueva contraseña")
     st.caption("Ingresa tu nueva contraseña para actualizar tu acceso en Supabase.")
 
@@ -635,7 +635,7 @@ with col_usr3:
 st.divider()
 
 # Título y encabezado principal
-st.title("💼 AI Job Application Tracker")
+st.title("💼 SmartCV")
 st.caption(t("app_caption"))
 
 # Valores exactos de Status requeridos por el proyecto
@@ -692,13 +692,21 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
             "questions": [],
             "current_index": 0,
             "current_feedback": None,
-            "history": []
+            "history": [],
+            "questions_attempted": False,
+            "last_generate_time": 0.0,
+            "error": None
         }
 
     c_session = st.session_state["coach_session"]
 
-    # Generación inicial con IA si aún no existen en la sesión
-    if not c_session.get("questions") or c_session.get("study_guide") is None:
+    # Si ya existen preguntas o guía cargadas (ej. sesión previa o recuperada), respetar como ya intentado
+    if c_session.get("questions") or c_session.get("study_guide") is not None:
+        c_session["questions_attempted"] = True
+
+    # Generación inicial con IA sólo si aún no se ha intentado (se marca la bandera tenga éxito o falle)
+    if not c_session.get("questions_attempted", False):
+        c_session["questions_attempted"] = True
         spinner_msg = "🧠 Generando plan de entrenamiento, análisis de brechas y preguntas de entrevista con Gemini..." if curr_lang == "es" else "🧠 Generating tailored interview questions, study guide and practice plan with Gemini..."
         with st.spinner(spinner_msg):
             app_skills = get_skills_by_application(app_actual["id"])
@@ -721,11 +729,27 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
                     language=curr_lang
                 )
                 c_session["study_guide"] = guia_estudio
-                c_session["questions"] = preguntas_gen
+                c_session["questions"] = preguntas_gen or []
                 c_session["current_index"] = 0
+                c_session["error"] = None
+                c_session["last_generate_time"] = time.time()
                 st.rerun()
             except Exception as e:
-                st.error(t("coach_init_error", error=e))
+                c_session["error"] = str(e)
+                c_session["last_generate_time"] = time.time()
+
+    # Si la generación falló, mostrar el error una vez y no reintentar sin pulsar el botón
+    if c_session.get("error") and not c_session.get("questions"):
+        st.error(t("coach_init_error", error=c_session["error"]))
+        time_since_err = time.time() - c_session.get("last_generate_time", 0.0)
+        is_cd_err = time_since_err < 5.0
+        remaining_err_s = int(5.0 - time_since_err) + 1 if is_cd_err else 0
+        btn_retry_lbl = f"⏳ Espera {remaining_err_s}s..." if is_cd_err else ("🔄 Reintentar generación con IA" if curr_lang == "es" else "🔄 Retry AI Generation")
+        if st.button(btn_retry_lbl, key=f"btn_retry_coach_{app_actual['id']}", use_container_width=True, disabled=is_cd_err):
+            c_session["questions_attempted"] = False
+            c_session["last_generate_time"] = time.time()
+            c_session["error"] = None
+            st.rerun()
 
     # Renderizado de las 3 secciones del Coach
     if c_session.get("questions") and (c_session.get("study_guide") is not None):
@@ -783,8 +807,28 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
 
         # PESTAÑA 2: BANCO DE PREGUNTAS
         with tab_bank:
-            st.markdown(f"### {t('coach_questions_header')}")
-            st.caption(t("coach_questions_caption"))
+            col_bq1, col_bq2 = st.columns([3.2, 1.8])
+            with col_bq1:
+                st.markdown(f"### {t('coach_questions_header')}")
+                st.caption(t("coach_questions_caption"))
+            with col_bq2:
+                time_since_btn = time.time() - c_session.get("last_generate_time", 0.0)
+                is_cd_btn = time_since_btn < 5.0
+                remaining_btn_s = int(5.0 - time_since_btn) + 1 if is_cd_btn else 0
+                btn_regen_lbl = (
+                    f"⏳ Espera {remaining_btn_s}s..." if is_cd_btn
+                    else ("🔄 Generar 7 nuevas preguntas" if st.session_state.get("lang") == "es" else "🔄 Generate 7 new questions")
+                )
+                if st.button(btn_regen_lbl, key=f"btn_regen_q_{app_actual['id']}", use_container_width=True, disabled=is_cd_btn):
+                    c_session["questions_attempted"] = False
+                    c_session["last_generate_time"] = time.time()
+                    c_session["questions"] = []
+                    c_session["study_guide"] = None
+                    c_session["current_index"] = 0
+                    c_session["current_feedback"] = None
+                    c_session["history"] = []
+                    c_session["error"] = None
+                    st.rerun()
             for q in c_session["questions"]:
                 cat_display = q.get('category', 'Técnica')
                 with st.expander(f"Q#{q.get('id', '')} - [{cat_display}] {q.get('focus_skill', '')}"):
@@ -995,7 +1039,7 @@ def get_user_application_number_map(applications: list) -> dict:
 # ==============================================================================
 # PÁGINA 0: DASHBOARD (Vista Rápida: Conteos Clave y Pipeline)
 # ==============================================================================
-if menu_opcion in ("dashboard", "📊 Dashboard"):
+if menu_opcion in ("dashboard", "📊 Dashboard", "📊 Career Dashboard", "Career Dashboard"):
     st.subheader(t("dashboard_title"))
     st.caption(t("dashboard_caption"))
 
@@ -2600,5 +2644,8 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
 # PÁGINA: CV IMPROVER (Optimización de Bullets y Rediseño Visual con IA)
 # ==============================================================================
 elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (AI)"):
-    from cv_improver.ui import render_cv_improver_page
-    render_cv_improver_page()
+    import cv_improver.ui
+    if os.getenv("SMARTCV_DEV") == "1":
+        import importlib
+        importlib.reload(cv_improver.ui)
+    cv_improver.ui.render_cv_improver_page()
