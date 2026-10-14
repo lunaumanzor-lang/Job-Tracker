@@ -1664,7 +1664,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
 # ==============================================================================
 # PÁGINA 2.5: AI JOB ANALYZER & MATCH EVALUATOR (Fase 5.2)
 # ==============================================================================
-elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
+elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer", "🎯 Analizar Compatibilidad y Sugerir Cursos", "🎯 Analyze Compatibility & Suggest Courses"):
     st.subheader(t("analyzer_title"))
     st.caption(t("analyzer_caption"))
 
