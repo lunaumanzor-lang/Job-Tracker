@@ -1156,11 +1156,3 @@ def render_cv_improver_page():
 
         # Auto-guardado en Supabase del progreso actual
         persist_active_cv_draft()
-
-        # Enlace a Adaptar a una vacante
-        st.divider()
-        st.markdown("### 🎯 ¿Deseas postularte a una vacante específica?")
-        st.caption("Adapta este currículum a los requisitos de una oferta concreta, destacando tus competencias más relevantes.")
-        if st.button("🚀 Adaptar mi CV a una vacante específica", key="btn_goto_tailor_cv_from_improver", use_container_width=True):
-            st.session_state["main_nav_radio"] = "tailor_cv"
-            st.rerun()
