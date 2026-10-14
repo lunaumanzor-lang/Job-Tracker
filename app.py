@@ -1719,9 +1719,12 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
                                     st.success("✅ ¡Texto de la vacante extraído exitosamente desde la URL!" if st.session_state.get("lang") == "es" else "✅ Job posting text successfully extracted from URL!")
                                     st.rerun()
                                 else:
-                                    st.warning(f"⚠️ {resultado_scrap}")
-                                    if app_obj.get("notes"):
-                                        st.info("💡 Consejo: Esta postulación tiene notas guardadas. Puedes cargarlas con el botón contiguo." if st.session_state.get("lang") == "es" else "💡 Tip: This application has notes saved. You can load them with the adjacent button.")
+                                    if any(k in resultado_scrap.lower() for k in ["acceso denegado", "localhost", "no permitid", "no válida", "red privada", "interna"]):
+                                        st.error(f"🚫 {resultado_scrap}")
+                                    else:
+                                        st.warning(f"⚠️ {resultado_scrap}")
+                                        if app_obj.get("notes"):
+                                            st.info("💡 Consejo: Esta postulación tiene notas guardadas. Puedes cargarlas con el botón contiguo." if st.session_state.get("lang") == "es" else "💡 Tip: This application has notes saved. You can load them with the adjacent button.")
                     else:
                         st.button(t("analyzer_btn_extract_url"), disabled=True, use_container_width=True, key="btn_ext_url_dis", help=t("analyzer_no_url_help"))
 
@@ -1765,7 +1768,10 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
                         st.success("✅ ¡Texto extraído exitosamente de la URL!" if st.session_state.get("lang") == "es" else "✅ Text extracted successfully!")
                         st.rerun()
                     else:
-                        st.warning(f"⚠️ {texto_sc}")
+                        if any(k in texto_sc.lower() for k in ["acceso denegado", "localhost", "no permitid", "no válida", "red privada", "interna"]):
+                            st.error(f"🚫 {texto_sc}")
+                        else:
+                            st.warning(f"⚠️ {texto_sc}")
 
     # Área de texto para pegar o editar el Job Description
     job_text_val = st.text_area(
@@ -2347,10 +2353,17 @@ elif menu_opcion in ("add_app", "➕ Agregar Nueva Aplicación"):
                     else:
                         st.error("No se pudieron estructurar los datos con IA.")
                 else:
-                    st.warning(f"{res_scrap}")
-                    # Guardamos al menos la URL para el formulario
-                    st.session_state["new_app_url"] = url_target
-                    st.session_state["add_app_ver"] = form_ver + 1
+                    es_error_seguridad = any(
+                        k in res_scrap.lower()
+                        for k in ["acceso denegado", "localhost", "no permitid", "no válida", "red privada", "interna"]
+                    )
+                    if es_error_seguridad:
+                        st.error(f"🚫 {res_scrap}")
+                    else:
+                        st.warning(f"{res_scrap}")
+                        # Guardamos al menos la URL para el formulario si no fue rechazada por seguridad
+                        st.session_state["new_app_url"] = url_target
+                        st.session_state["add_app_ver"] = form_ver + 1
 
         # Expander de respaldo si el portal requiere pegar texto manualmente (login-wall)
         with st.expander(t("add_app_autofill_fallback_expander"), expanded=False):
