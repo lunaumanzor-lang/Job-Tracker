@@ -990,6 +990,7 @@ MENU_KEYS = [
     "analyzer",
     "coach",
     "cv_improver",
+    "tailor_cv",
     "stats",
     "profile",
     "dashboard"
@@ -1001,6 +1002,7 @@ menu_label_map = {
     "analyzer": t("nav_analyzer"),
     "coach": t("nav_coach"),
     "cv_improver": "✨ CV Improver (AI)" if st.session_state.get("lang") == "en" else "✨ Mejorar CV con IA",
+    "tailor_cv": "🎯 Tailor CV to a Job" if st.session_state.get("lang") == "en" else "🎯 Adaptar a una vacante",
     "stats": t("nav_stats"),
     "profile": t("nav_profile"),
     "dashboard": t("nav_dashboard")
@@ -2204,6 +2206,12 @@ elif menu_opcion in ("view_apps", "📋 Ver y Gestionar Aplicaciones"):
                         st.session_state["coach_app_id"] = app_actual["id"]
                         st.rerun()
 
+                    btn_tailor_lbl = "🎯 Adaptar mi CV a esta vacante" if st.session_state.get("lang") == "es" else "🎯 Tailor my CV to this job"
+                    if st.button(btn_tailor_lbl, key=f"btn_tailor_app_{app_actual['id']}", use_container_width=True):
+                        st.session_state["tailor_prefill_app_id"] = app_actual["id"]
+                        st.session_state["main_nav_radio"] = "tailor_cv"
+                        st.rerun()
+
                     # SECCIÓN DE ELIMINACIÓN CON CONFIRMACIÓN (Requisito 5)
                     st.markdown("---")
                     st.markdown(f"#### {t('app_detail_danger_zone')}")
@@ -2649,3 +2657,13 @@ elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (A
         import importlib
         importlib.reload(cv_improver.ui)
     cv_improver.ui.render_cv_improver_page()
+
+# ==============================================================================
+# PÁGINA: ADAPTAR A UNA VACANTE
+# ==============================================================================
+elif menu_opcion in ("tailor_cv", "🎯 Adaptar a una vacante", "🎯 Tailor CV to a Job"):
+    import tailor_cv_page
+    if os.getenv("SMARTCV_DEV") == "1":
+        import importlib
+        importlib.reload(tailor_cv_page)
+    tailor_cv_page.render_tailor_cv_page()
