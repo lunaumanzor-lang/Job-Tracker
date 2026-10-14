@@ -10,8 +10,8 @@ from .bullet_enhancer import (
     enhance_summary,
     enhance_resume_content
 )
-import os
 from typing import Optional, Tuple
+from ai_client import get_ai_api_key
 
 
 def get_active_llm_provider(
@@ -20,10 +20,10 @@ def get_active_llm_provider(
 ) -> Tuple[Optional[LLMProvider], str]:
     """
     Detecta y retorna la mejor instancia de LLMProvider disponible.
-    Prioriza Gemini si está configurada en .env o por el usuario, o Claude si se especifica.
+    Prioriza Gemini si está configurada en el servidor, o Claude si se especifica.
     """
-    g_key = gemini_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    a_key = anthropic_key or os.getenv("ANTHROPIC_API_KEY")
+    g_key = gemini_key or get_ai_api_key("gemini")
+    a_key = anthropic_key or get_ai_api_key("anthropic")
 
     if g_key and g_key.strip():
         try:

@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 import pdfplumber
 from .base import ScannedPDFError, CorruptFileError, EmptyFileError
+from ai_client import get_ai_api_key, generate_content_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -36,37 +37,29 @@ def _try_ocr_page_image(page, page_num: int) -> Optional[str]:
         return None
 
     try:
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        api_key = get_ai_api_key("gemini")
         if not api_key:
             return None
-
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
 
         # Renderizar la página a imagen PIL y optimizar dimensiones para transmisión rápida
         page_img = page.to_image(resolution=150).original
         page_img.thumbnail((1024, 1024))
 
-        # Probar modelos disponibles para visión con timeout suficiente (45s)
-        # Se prioriza gemini-3.5-flash-lite ya que cuenta con cuota alta y respuesta rápida
-        for m in ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]:
-            try:
-                model = genai.GenerativeModel(m)
-                resp = model.generate_content(
-                    [
-                        "Extrae todo el texto de esta página de currículum exactamente como aparece. "
-                        "Conserva íntegramente nombres, correos, enlaces, experiencia laboral, empresas, cargos, fechas y viñetas (bullets). "
-                        "Responde ÚNICAMENTE con el texto extraído sin añadir introducciones ni comentarios.",
-                        page_img
-                    ],
-                    request_options={"timeout": 45}
-                )
-                if resp and resp.text and len(resp.text.strip()) > 30:
-                    logger.info(f"OCR exitoso en página {page_num} con modelo {m} ({len(resp.text)} caracteres).")
-                    return resp.text.strip()
-            except Exception as model_err:
-                logger.warning(f"OCR fallo en página {page_num} con modelo {m}: {model_err}")
-                continue
+        prompt_ocr = (
+            "Extrae todo el texto de esta página de currículum exactamente como aparece. "
+            "Conserva íntegramente nombres, correos, enlaces, experiencia laboral, empresas, cargos, fechas y viñetas (bullets). "
+            "Responde ÚNICAMENTE con el texto extraído sin añadir introducciones ni comentarios."
+        )
+
+        resp = generate_content_with_retry(
+            contents=[prompt_ocr, page_img],
+            candidate_models=["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"],
+            api_key=api_key,
+            request_options={"timeout": 45}
+        )
+        if resp and resp.text and len(resp.text.strip()) > 30:
+            logger.info(f"OCR exitoso en página {page_num} ({len(resp.text)} caracteres).")
+            return resp.text.strip()
     except Exception as e:
         logger.warning(f"No se pudo realizar OCR en página {page_num}: {e}")
     return None
