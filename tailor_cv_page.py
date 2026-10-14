@@ -8,7 +8,12 @@ sin sobreescribir el perfil maestro ni el borrador de CV Improver.
 import time
 import copy
 from typing import Dict, Any, Optional, List
+import importlib
 import streamlit as st
+
+import database
+if not hasattr(database, "save_tailored_cv_version"):
+    importlib.reload(database)
 
 from database import (
     get_all_applications,

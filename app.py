@@ -2662,6 +2662,10 @@ elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (A
 # PÁGINA: ADAPTAR A UNA VACANTE
 # ==============================================================================
 elif menu_opcion in ("tailor_cv", "🎯 Adaptar a una vacante", "🎯 Tailor CV to a Job"):
+    import database
+    if not hasattr(database, "save_tailored_cv_version"):
+        import importlib
+        importlib.reload(database)
     import tailor_cv_page
     if os.getenv("SMARTCV_DEV") == "1":
         import importlib
