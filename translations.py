@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: SmartCV
+# PROYECTO: Smart Job Tracker
 # FASE 6.1: Internacionalización (i18n) - Diccionarios de Traducción Centralizados
 # ==============================================================================
 
@@ -11,7 +11,7 @@ import streamlit as st
 # Elementos que NUNCA deben traducirse en ningún idioma
 # ------------------------------------------------------------------------------
 NEVER_TRANSLATE: Set[str] = {
-    "SmartCV",
+    "Smart Job Tracker",
     "Ghosted"
 }
 

@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # Script de Migración Idempotente: SQLite -> Supabase (migrate_to_supabase.py)
 # ==============================================================================
 

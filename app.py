@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: SmartCV
+# PROYECTO: Smart Job Tracker
 # FASE 3: Application Tracker con Streamlit (app.py)
 # ==============================================================================
 
@@ -99,7 +99,7 @@ from pdf_generator import generate_resume_pdf
 # CONFIGURACIÓN DE PÁGINA
 # ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="SmartCV",
+    page_title="Smart Job Tracker",
     page_icon="💼",
     layout="wide"  # 'wide' aprovecha mejor el ancho de la pantalla para tablas y formularios
 )
@@ -298,7 +298,7 @@ if st.session_state.get("user") is not None and "access_token" in st.session_sta
 
 # 3. Crear la pantalla de Login y Registro
 def login_screen():
-    st.title("💼 SmartCV")
+    st.title("💼 Smart Job Tracker")
     st.subheader("Acceso a la plataforma")
 
     if st.session_state.get("session_expired_notice"):
@@ -540,7 +540,7 @@ elif "error_description" in st.query_params or "error" in st.query_params:
 
 # Pantalla de creación de nueva contraseña tras el enlace de recuperación
 def set_new_password_screen():
-    st.title("💼 SmartCV")
+    st.title("💼 Smart Job Tracker")
     st.subheader("🔑 Establecer nueva contraseña")
     st.caption("Ingresa tu nueva contraseña para actualizar tu acceso en Supabase.")
 
@@ -635,7 +635,7 @@ with col_usr3:
 st.divider()
 
 # Título y encabezado principal
-st.title("💼 SmartCV")
+st.title("💼 Smart Job Tracker")
 st.caption(t("app_caption"))
 
 # Valores exactos de Status requeridos por el proyecto
@@ -2645,7 +2645,7 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
 # ==============================================================================
 elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (AI)"):
     import cv_improver.ui
-    if os.getenv("SMARTCV_DEV") == "1":
+    if os.getenv("SMARTCV_DEV") == "1" or os.getenv("SMART_JOB_TRACKER_DEV") == "1":
         import importlib
         importlib.reload(cv_improver.ui)
     cv_improver.ui.render_cv_improver_page()

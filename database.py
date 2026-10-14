@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: SmartCV
+# PROYECTO: Smart Job Tracker
 # FASE 2: Base de Datos Relacional con SQLite (database.py)
 # ==============================================================================
 

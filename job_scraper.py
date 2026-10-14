@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 5.2: Extractor de Contenido Web para Vacantes (job_scraper.py)
 # ==============================================================================
 

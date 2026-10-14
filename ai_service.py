@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: SmartCV
+# PROYECTO: Smart Job Tracker
 # FASE 5: Servicio de Inteligencia Artificial con Gemini LLM (ai_service.py)
 # ==============================================================================
 
