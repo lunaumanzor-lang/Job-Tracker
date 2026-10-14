@@ -40,6 +40,11 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
     genai.configure(api_key=api_key)
 
     candidatos_preferidos = [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
         "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
         "gemini-2.0-flash",
@@ -1761,11 +1766,13 @@ Devuelve ÚNICA Y EXCLUSIVAMENTE un objeto JSON válido con la siguiente estruct
 """
 
     candidate_models = [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
         "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-pro"
+        "gemini-pro-latest"
     ]
 
     key = api_key or get_ai_api_key("gemini")

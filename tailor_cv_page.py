@@ -210,6 +210,9 @@ def render_tailor_cv_page():
                                 "💡 Puedes copiar el texto manualmente y pegarlo en la pestaña '✍️ Pegar texto' sin perder ningún dato."
                             )
 
+        if st.session_state.get("tailor_job_text") and st.session_state.get("tailor_input_url"):
+            st.caption(f"📄 Contenido de la oferta cargado ({len(st.session_state['tailor_job_text']):,} caracteres). Listo para adaptar.")
+
     with tab_app:
         st.caption("Selecciona una postulación que ya tengas registrada en tu seguimiento:")
         user_apps = get_all_applications()
@@ -242,7 +245,7 @@ def render_tailor_cv_page():
                         st.session_state["tailor_job_text"] = app_obj.get("notes", "")
                     if app_obj.get("job_url"):
                         st.session_state["tailor_input_url"] = app_obj.get("job_url", "")
-                    st.caption(f"📍 Empresa: **{app_obj.get('company')}** | Puesto: **{app_obj.get('position')}**")
+                    st.info(f"📍 **Empresa:** {app_obj.get('company')} | **Puesto:** {app_obj.get('position')}")
 
     with tab_text:
         st.caption("Pega directamente los requisitos, responsabilidades y descripción de la oferta laboral:")
@@ -255,30 +258,12 @@ def render_tailor_cv_page():
         )
         st.session_state["tailor_job_text"] = pasted_text
 
-    # Campos de Empresa y Puesto (para nombrar la versión y el archivo)
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        company_val = st.text_input(
-            "Empresa:",
-            value=st.session_state.get("tailor_company", ""),
-            key="input_tailor_company",
-            placeholder="Ej. Acme Corp"
-        )
-        st.session_state["tailor_company"] = company_val
-    with col_c2:
-        position_val = st.text_input(
-            "Puesto / Cargo:",
-            value=st.session_state.get("tailor_position", ""),
-            key="input_tailor_position",
-            placeholder="Ej. Senior Python Developer"
-        )
-        st.session_state["tailor_position"] = position_val
+    company_val = st.session_state.get("tailor_company", "")
+    position_val = st.session_state.get("tailor_position", "")
 
     # Validación de longitud (Tope estricto de 15.000 caracteres)
     job_text_current = st.session_state.get("tailor_job_text", "").strip()
     char_count = len(job_text_current)
-    st.caption(f"📏 Longitud del texto de la vacante: **{char_count:,} / 15.000** caracteres.")
-
     if char_count > 15000:
         st.warning(
             "⚠️ El texto supera el tope de 15.000 caracteres. Se recortará automáticamente a los primeros 15.000 caracteres."
@@ -423,7 +408,13 @@ def render_tailor_cv_page():
             "Se guardará como una copia dedicada a esta vacante sin sobreescribir tu perfil maestro ni el borrador de CV Improver."
         )
 
-        default_name = f"CV para {company_val or 'Vacante'} - {position_val or 'Candidatura'}"
+        col_sv1, col_sv2 = st.columns(2)
+        with col_sv1:
+            save_company = st.text_input("Empresa (opcional):", value=company_val, key="input_save_company")
+        with col_sv2:
+            save_position = st.text_input("Puesto / Cargo (opcional):", value=position_val, key="input_save_position")
+
+        default_name = f"CV para {save_company or 'Vacante'} - {save_position or 'Candidatura'}"
         version_name_input = st.text_input(
             "Nombre para identificar esta versión:",
             value=default_name,
@@ -453,8 +444,8 @@ def render_tailor_cv_page():
                         version_name=version_name_input.strip(),
                         tailored_cv=payload_cv,
                         application_id=st.session_state.get("tailor_selected_app_id"),
-                        target_company=company_val.strip() if company_val else None,
-                        target_position=position_val.strip() if position_val else None,
+                        target_company=save_company.strip() if save_company else None,
+                        target_position=save_position.strip() if save_position else None,
                         job_url=st.session_state.get("tailor_input_url"),
                         job_description=job_text_current
                     )
