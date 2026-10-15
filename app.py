@@ -658,20 +658,29 @@ def render_sidebar() -> str:
         "dashboard": t("nav_dashboard")
     }
 
-    if "nav_initialized" not in st.session_state:
-        st.session_state["main_nav_radio"] = "add_app"
-        st.session_state["nav_initialized"] = True
+    # Sincronizar selección actual entre idiomas para no perder la vista seleccionada
+    prev_selected = (
+        st.session_state.get("selected_nav_section")
+        or st.session_state.get("main_nav_radio")
+        or "add_app"
+    )
+    if prev_selected not in menu_keys:
+        prev_selected = "add_app"
 
-    if st.session_state.get("main_nav_radio") not in menu_keys:
-        st.session_state["main_nav_radio"] = "add_app"
+    selected_index = menu_keys.index(prev_selected)
 
-    return st.sidebar.radio(
+    # Clave dependiente del idioma activo para forzar a Streamlit a redibujar el widget con las etiquetas traducidas
+    selected_key = st.sidebar.radio(
         t("nav_select_section"),
         menu_keys,
         format_func=lambda k: menu_label_map[k],
-        index=0,
-        key="main_nav_radio"
+        index=selected_index,
+        key=f"main_nav_radio_{current_lang}"
     )
+
+    st.session_state["selected_nav_section"] = selected_key
+    st.session_state["main_nav_radio"] = selected_key
+    return selected_key
 
 menu_opcion = render_sidebar()
 
@@ -713,7 +722,8 @@ else:
         if st.session_state.get("session_expired_notice"):
             st.info("🕒 Tu sesión anterior expiró tras 4 horas. Por favor inicia sesión nuevamente." if st.session_state.get("lang") == "es" else "🕒 Your previous session expired after 4 hours. Please log in again.")
 
-        with st.expander("🔐 Iniciar Sesión / Acceso a la Plataforma", expanded=True):
+        exp_title = "🔐 Iniciar Sesión / Acceso a la Plataforma" if st.session_state.get("lang") == "es" else "🔐 Sign In / Platform Access"
+        with st.expander(exp_title, expanded=True):
             tab_log, tab_reg, tab_rec = st.tabs([
                 "🔑 Iniciar Sesión" if st.session_state.get("lang") == "es" else "🔑 Log In",
                 "📝 Crear Cuenta" if st.session_state.get("lang") == "es" else "📝 Sign Up",

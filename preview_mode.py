@@ -45,13 +45,13 @@ def render_unauthenticated_preview(menu_opcion: str):
                 st.text_input("🏢 " + ("Empresa" if not is_en else "Company"), value="Google", disabled=True)
                 st.text_input("💼 " + ("Puesto" if not is_en else "Position"), value="Senior Python Developer", disabled=True)
                 st.selectbox("📍 " + ("Modalidad de Trabajo" if not is_en else "Work Mode"), ["Remote", "Hybrid", "On-site"], index=0, disabled=True)
-                st.text_input("💵 " + ("Salario Estimado" if not is_en else "Estimated Salary"), value="$85,000 USD / año", disabled=True)
+                st.text_input("💵 " + ("Salario Estimado" if not is_en else "Estimated Salary"), value="$85,000 USD / año" if not is_en else "$85,000 USD / year", disabled=True)
             with col2:
                 st.selectbox("📌 " + ("Estado Inicial" if not is_en else "Initial Status"), ["Applied", "Recruiter Screen", "Technical Interview"], index=0, disabled=True)
                 st.text_input("🔗 " + ("Enlace a la Oferta (URL)" if not is_en else "Job Posting URL"), value="https://careers.google.com/jobs/results/123456", disabled=True)
                 st.text_area(
                     "📝 " + ("Notas / Descripción" if not is_en else "Notes / Description"),
-                    value="Requisitos clave: Python 3.12, FastAPI, PostgreSQL, Docker, GCP, Microservicios.",
+                    value="Requisitos clave: Python 3.12, FastAPI, PostgreSQL, Docker, GCP, Microservicios." if not is_en else "Key requirements: Python 3.12, FastAPI, PostgreSQL, Docker, GCP, Microservices.",
                     height=110,
                     disabled=True
                 )
@@ -73,16 +73,24 @@ def render_unauthenticated_preview(menu_opcion: str):
 
         col_f1, col_f2 = st.columns([0.6, 0.4])
         with col_f1:
-            st.text_input("🔍 " + ("Buscar por empresa o puesto" if not is_en else "Search by company or position"), value="", placeholder="Ej: Google, Backend...", disabled=True)
+            st.text_input("🔍 " + ("Buscar por empresa o puesto" if not is_en else "Search by company or position"), value="", placeholder="Ej: Google, Backend..." if not is_en else "E.g.: Google, Backend...", disabled=True)
         with col_f2:
-            st.selectbox("📌 " + ("Filtrar por Estado" if not is_en else "Filter by Status"), ["Todos / All", "Applied", "Technical Interview", "Offer"], index=0, disabled=True)
+            st.selectbox("📌 " + ("Filtrar por Estado" if not is_en else "Filter by Status"), ["Todos / All" if is_en else "Todos los estados", "Applied", "Technical Interview", "Offer"], index=0, disabled=True)
 
-        demo_df = pd.DataFrame([
-            {"#": 1, "Empresa / Company": "Google", "Puesto / Position": "Senior Python Developer", "Estado / Status": "Technical Interview", "Modalidad": "Remote", "Fecha": "2026-10-12"},
-            {"#": 2, "Empresa / Company": "Stripe", "Puesto / Position": "Backend Platform Engineer", "Estado / Status": "Recruiter Screen", "Modalidad": "Remote", "Fecha": "2026-10-10"},
-            {"#": 3, "Empresa / Company": "AWS", "Puesto / Position": "Cloud Solutions Architect", "Estado / Status": "Applied", "Modalidad": "Hybrid", "Fecha": "2026-10-08"},
-            {"#": 4, "Empresa / Company": "Spotify", "Puesto / Position": "Staff Data Engineer", "Estado / Status": "Final Interview", "Modalidad": "Remote", "Fecha": "2026-10-04"}
-        ])
+        if not is_en:
+            demo_df = pd.DataFrame([
+                {"#": 1, "Empresa": "Google", "Puesto": "Senior Python Developer", "Estado": "Entrevista técnica", "Modalidad": "Remoto", "Fecha": "2026-10-12"},
+                {"#": 2, "Empresa": "Stripe", "Puesto": "Backend Platform Engineer", "Estado": "Entrevista inicial", "Modalidad": "Remoto", "Fecha": "2026-10-10"},
+                {"#": 3, "Empresa": "AWS", "Puesto": "Cloud Solutions Architect", "Estado": "Postulado", "Modalidad": "Híbrido", "Fecha": "2026-10-08"},
+                {"#": 4, "Empresa": "Spotify", "Puesto": "Staff Data Engineer", "Estado": "Entrevista final", "Modalidad": "Remoto", "Fecha": "2026-10-04"}
+            ])
+        else:
+            demo_df = pd.DataFrame([
+                {"#": 1, "Company": "Google", "Position": "Senior Python Developer", "Status": "Technical Interview", "Work Mode": "Remote", "Date": "2026-10-12"},
+                {"#": 2, "Company": "Stripe", "Position": "Backend Platform Engineer", "Status": "Recruiter Screen", "Work Mode": "Remote", "Date": "2026-10-10"},
+                {"#": 3, "Company": "AWS", "Position": "Cloud Solutions Architect", "Status": "Applied", "Work Mode": "Hybrid", "Date": "2026-10-08"},
+                {"#": 4, "Company": "Spotify", "Position": "Staff Data Engineer", "Status": "Final Interview", "Work Mode": "Remote", "Date": "2026-10-04"}
+            ])
         st.dataframe(demo_df, use_container_width=True, hide_index=True)
 
     # 3. Ver Compatibilidad y Sugerir Cursos
@@ -141,18 +149,23 @@ def render_unauthenticated_preview(menu_opcion: str):
                 "**Question #1 (Technical / Architecture):**\n\n"
                 "\"How would you design a Python data ingestion pipeline capable of handling 50,000 concurrent events per minute without message loss?\""
             )
+            sample_answer = (
+                "Utilizaría una cola de mensajería asíncrona como Kafka o RabbitMQ junto con workers de FastAPI y Celery, asegurando persistencia y reintentos idempotentes..."
+                if not is_en else
+                "I would implement an asynchronous message queue such as Kafka or RabbitMQ paired with FastAPI and Celery workers, ensuring persistence and idempotent retries..."
+            )
             st.text_area(
                 "💬 " + ("Tu Respuesta (Simulador)" if not is_en else "Your Answer (Simulator)"),
-                value="Utilizaría una cola de mensajería asíncrona como Kafka o RabbitMQ junto con workers de FastAPI y Celery, asegurando persistencia y reintentos idempotentes...",
+                value=sample_answer,
                 disabled=True,
                 height=90
             )
             st.markdown("##### 🌟 " + ("Evaluación STAR de la IA" if not is_en else "AI STAR Feedback"))
             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-            col_s1.metric("Situación", "9/10")
-            col_s2.metric("Tarea", "8/10")
-            col_s3.metric("Acción", "9/10")
-            col_s4.metric("Resultado", "8.5/10")
+            col_s1.metric("Situación" if not is_en else "Situation", "9/10")
+            col_s2.metric("Tarea" if not is_en else "Task", "8/10")
+            col_s3.metric("Acción" if not is_en else "Action", "9/10")
+            col_s4.metric("Resultado" if not is_en else "Result", "8.5/10")
 
     # 5. CV Improver
     elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (AI)"):
@@ -199,7 +212,7 @@ def render_unauthenticated_preview(menu_opcion: str):
 
         col_st1, col_st2, col_st3, col_st4 = st.columns(4)
         col_st1.metric("📨 " + ("Tasa de Respuesta" if not is_en else "Response Rate"), "42%", "+8%")
-        col_st2.metric("⏱️ " + ("Días hasta 1ª Entrevista" if not is_en else "Days to 1st Interview"), "5.2 días", "-1.4 días")
+        col_st2.metric("⏱️ " + ("Días hasta 1ª Entrevista" if not is_en else "Days to 1st Interview"), "5.2 días" if not is_en else "5.2 days", "-1.4 días" if not is_en else "-1.4 days")
         col_st3.metric("🎯 " + ("Conversión a Final" if not is_en else "Final Conversion"), "28%", "+5%")
         col_st4.metric("🎉 " + ("Ofertas Recibidas" if not is_en else "Offers Received"), "2", "+1")
 
@@ -217,14 +230,18 @@ def render_unauthenticated_preview(menu_opcion: str):
             st.markdown("#### 💼 " + ("Perfil Maestro del Candidato" if not is_en else "Candidate Master Profile"))
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                st.text_input("👤 " + ("Nombre Completo" if not is_en else "Full Name"), value="Usuario Demostración", disabled=True)
+                st.text_input("👤 " + ("Nombre Completo" if not is_en else "Full Name"), value="Usuario Demostración" if not is_en else "Demo Candidate", disabled=True)
                 st.text_input("💼 " + ("Título Profesional" if not is_en else "Professional Title"), value="Senior Python & Cloud Engineer", disabled=True)
-                st.text_input("⏳ " + ("Años de Experiencia" if not is_en else "Years of Experience"), value="6 años", disabled=True)
+                st.text_input("⏳ " + ("Años de Experiencia" if not is_en else "Years of Experience"), value="6 años" if not is_en else "6 years", disabled=True)
             with col_p2:
                 st.markdown("##### 🛠️ " + ("Habilidades Técnicas Registradas" if not is_en else "Registered Technical Skills"))
                 st.markdown("`Python` `SQL` `FastAPI` `PostgreSQL` `Docker` `Streamlit` `GCP` `Git` `REST APIs`")
                 st.markdown("##### 🤝 " + ("Habilidades Blandas" if not is_en else "Soft Skills"))
-                st.markdown("`Trabajo en equipo` `Resolución de problemas` `Comunicación técnica`")
+                st.markdown(
+                    "`Trabajo en equipo` `Resolución de problemas` `Comunicación técnica`"
+                    if not is_en else
+                    "`Teamwork` `Problem solving` `Technical communication`"
+                )
 
     # 8. Dashboard
     else:
