@@ -597,46 +597,206 @@ if st.session_state.get("is_resetting_password"):
     set_new_password_screen()
     st.stop()
 
-# 4. Lógica de control de acceso: si no hay usuario, mostrar SOLO la pantalla de login
-if st.session_state.user is None:
-    login_screen()
-    st.stop()  # Detiene la renderización del resto de la app (sidebar, dashboard, formularios)
+# Importar módulo de vista previa para usuarios no autenticados
+import preview_mode
 
-# 5. Barra superior con el usuario activo y botón de Cerrar Sesión
-col_usr1, col_usr2, col_usr3 = st.columns([0.6, 0.2, 0.2])
-with col_usr1:
-    user_label = "Active User" if st.session_state.get("lang") == "en" else "Usuario activo"
-    st.markdown(f"👤 **{user_label}:** `{st.session_state.user.email}`")
-with col_usr2:
-    change_pwd_label = "🔑 Change Password" if st.session_state.get("lang") == "en" else "🔑 Cambiar Contraseña"
-    if st.button(change_pwd_label, use_container_width=True):
-        st.session_state.is_resetting_password = True
-        st.rerun()
-with col_usr3:
-    if st.button(t("logout_button"), use_container_width=True):
-        cur_sid = st.query_params.get("session_id")
-        if cur_sid:
-            delete_auth_session(cur_sid)
-            st.query_params.pop("session_id", None)
-        try:
-            supabase.auth.sign_out()
-        except Exception:
-            pass
-        st.session_state.user = None
-        st.session_state.access_token = None
-        st.session_state.refresh_token = None
-        st.session_state.pop("supabase_client", None)
-        st.session_state.is_resetting_password = False
-        st.session_state.pop("main_nav_radio", None)
-        st.session_state.pop("nav_initialized", None)
-        st.session_state.pop("session_expired_notice", None)
-        st.rerun()
+# ------------------------------------------------------------------------------
+# MENÚ DE NAVEGACIÓN LATERAL (Sidebar) - SIEMPRE VISIBLE
+# ------------------------------------------------------------------------------
+def render_sidebar() -> str:
+    st.sidebar.markdown(f"#### {t('lang_selector_label')}")
+    current_lang = st.session_state.get("lang", "es")
+    lang_index = 0 if current_lang == "es" else 1
+
+    def handle_language_change():
+        selected_option = st.session_state.get("sidebar_lang_selector", "")
+        if not selected_option:
+            return
+        new_lang = "en" if "EN" in selected_option else "es"
+        if new_lang != st.session_state.get("lang"):
+            st.session_state["lang"] = new_lang
+            if st.session_state.get("user") is not None:
+                try:
+                    set_user_preferred_language(new_lang)
+                except Exception:
+                    pass
+            st.rerun()
+
+    st.sidebar.radio(
+        t("lang_selector_label"),
+        options=["🇪🇸 Español (ES)", "🇺🇸 English (EN)"],
+        index=lang_index,
+        key="sidebar_lang_selector",
+        on_change=handle_language_change,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    st.sidebar.divider()
+
+    st.sidebar.title(t("nav_title"))
+    st.sidebar.caption(t("nav_caption"))
+
+    menu_keys = [
+        "add_app",
+        "view_apps",
+        "analyzer",
+        "coach",
+        "cv_improver",
+        "stats",
+        "profile",
+        "dashboard"
+    ]
+
+    menu_label_map = {
+        "add_app": t("nav_add_app"),
+        "view_apps": t("nav_view_apps"),
+        "analyzer": t("nav_analyzer"),
+        "coach": t("nav_coach"),
+        "cv_improver": "✨ CV Improver (AI)" if st.session_state.get("lang") == "en" else "✨ Mejorar CV con IA",
+        "stats": t("nav_stats"),
+        "profile": t("nav_profile"),
+        "dashboard": t("nav_dashboard")
+    }
+
+    if "nav_initialized" not in st.session_state:
+        st.session_state["main_nav_radio"] = "add_app"
+        st.session_state["nav_initialized"] = True
+
+    if st.session_state.get("main_nav_radio") not in menu_keys:
+        st.session_state["main_nav_radio"] = "add_app"
+
+    return st.sidebar.radio(
+        t("nav_select_section"),
+        menu_keys,
+        format_func=lambda k: menu_label_map[k],
+        index=0,
+        key="main_nav_radio"
+    )
+
+menu_opcion = render_sidebar()
+
+# ------------------------------------------------------------------------------
+# BARRA SUPERIOR DE AUTENTICACIÓN / USUARIO ACTIVO (Arriba de la página)
+# ------------------------------------------------------------------------------
+if st.session_state.user is not None:
+    col_usr1, col_usr2, col_usr3 = st.columns([0.6, 0.2, 0.2])
+    with col_usr1:
+        user_label = "Active User" if st.session_state.get("lang") == "en" else "Usuario activo"
+        st.markdown(f"👤 **{user_label}:** `{st.session_state.user.email}`")
+    with col_usr2:
+        change_pwd_label = "🔑 Change Password" if st.session_state.get("lang") == "en" else "🔑 Cambiar Contraseña"
+        if st.button(change_pwd_label, use_container_width=True):
+            st.session_state.is_resetting_password = True
+            st.rerun()
+    with col_usr3:
+        if st.button(t("logout_button"), use_container_width=True):
+            cur_sid = st.query_params.get("session_id")
+            if cur_sid:
+                delete_auth_session(cur_sid)
+                st.query_params.pop("session_id", None)
+            try:
+                supabase.auth.sign_out()
+            except Exception:
+                pass
+            st.session_state.user = None
+            st.session_state.access_token = None
+            st.session_state.refresh_token = None
+            st.session_state.pop("supabase_client", None)
+            st.session_state.is_resetting_password = False
+            st.session_state.pop("main_nav_radio", None)
+            st.session_state.pop("nav_initialized", None)
+            st.session_state.pop("session_expired_notice", None)
+            st.rerun()
+else:
+    # Menú superior de inicio de sesión y registro visible incluso sin autenticación
+    with st.container():
+        if st.session_state.get("session_expired_notice"):
+            st.info("🕒 Tu sesión anterior expiró tras 4 horas. Por favor inicia sesión nuevamente." if st.session_state.get("lang") == "es" else "🕒 Your previous session expired after 4 hours. Please log in again.")
+
+        with st.expander("🔐 Iniciar Sesión / Acceso a la Plataforma", expanded=True):
+            tab_log, tab_reg, tab_rec = st.tabs([
+                "🔑 Iniciar Sesión" if st.session_state.get("lang") == "es" else "🔑 Log In",
+                "📝 Crear Cuenta" if st.session_state.get("lang") == "es" else "📝 Sign Up",
+                "🔄 Recuperar Contraseña" if st.session_state.get("lang") == "es" else "🔄 Reset Password"
+            ])
+            with tab_log:
+                with st.form("top_login_form"):
+                    col_l1, col_l2, col_l3 = st.columns([0.45, 0.4, 0.15])
+                    with col_l1:
+                        top_email = st.text_input("Usuario / Correo electrónico" if st.session_state.get("lang") == "es" else "User / Email", placeholder="ejemplo@correo.com", key="top_login_email")
+                    with col_l2:
+                        top_password = st.text_input("Contraseña" if st.session_state.get("lang") == "es" else "Password", type="password", placeholder="••••••••", key="top_login_pwd")
+                    with col_l3:
+                        st.write("")
+                        st.write("")
+                        top_submit = st.form_submit_button("Entrar" if st.session_state.get("lang") == "es" else "Log In", use_container_width=True)
+                    if top_submit:
+                        try:
+                            res = supabase.auth.sign_in_with_password({"email": top_email.strip(), "password": top_password})
+                            establish_authenticated_session(res.user, res.session, email_fallback=top_email.strip(), hours=4)
+                            st.session_state.pop("session_expired_notice", None)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Credenciales incorrectas: {e}")
+            with tab_reg:
+                with st.form("top_signup_form"):
+                    col_r1, col_r2, col_r3 = st.columns([0.45, 0.4, 0.15])
+                    with col_r1:
+                        new_email = st.text_input("Correo electrónico" if st.session_state.get("lang") == "es" else "Email", placeholder="nuevo@correo.com", key="top_new_email")
+                    with col_r2:
+                        new_password = st.text_input("Contraseña (mín. 6 caracteres)" if st.session_state.get("lang") == "es" else "Password (min 6 chars)", type="password", key="top_new_pwd")
+                    with col_r3:
+                        st.write("")
+                        st.write("")
+                        signup_submit = st.form_submit_button("Registrarse" if st.session_state.get("lang") == "es" else "Sign Up", use_container_width=True)
+                    if signup_submit:
+                        if not new_email.strip() or not new_password.strip() or len(new_password) < 6:
+                            st.warning("Por favor completa el correo y una contraseña de al menos 6 caracteres." if st.session_state.get("lang") == "es" else "Please fill in email and a password of at least 6 characters.")
+                        else:
+                            try:
+                                res_reg = supabase.auth.sign_up({
+                                    "email": new_email.strip(),
+                                    "password": new_password.strip(),
+                                    "options": {"email_redirect_to": "http://localhost:8501"}
+                                })
+                                if res_reg.user and res_reg.session:
+                                    establish_authenticated_session(res_reg.user, res_reg.session, email_fallback=new_email.strip(), hours=4)
+                                    st.success("🎉 ¡Cuenta creada con éxito!")
+                                    st.rerun()
+                                else:
+                                    st.success(
+                                        f"📧 **¡Cuenta creada exitosamente!**\n\n"
+                                        f"Hemos enviado un correo a **{new_email.strip()}**. Confírmalo antes de iniciar sesión."
+                                    )
+                            except Exception as e:
+                                st.error(f"Error al registrar: {e}")
+            with tab_rec:
+                col_c1, col_c2 = st.columns([0.75, 0.25])
+                with col_c1:
+                    rec_email = st.text_input("Correo registrado" if st.session_state.get("lang") == "es" else "Registered email", key="top_recovery_email")
+                with col_c2:
+                    st.write("")
+                    st.write("")
+                    if st.button("Enviar enlace" if st.session_state.get("lang") == "es" else "Send link", key="top_btn_send_link", use_container_width=True):
+                        if not rec_email.strip():
+                            st.warning("Por favor ingresa tu correo.")
+                        else:
+                            try:
+                                supabase.auth.reset_password_for_email(rec_email.strip(), options={"redirect_to": "http://localhost:8501"})
+                                st.success(f"📧 Se ha enviado un enlace a **{rec_email.strip()}** con instrucciones para restablecer tu contraseña.")
+                            except Exception as err:
+                                st.error(f"Error al enviar recuperación: {err}")
 
 st.divider()
 
 # Título y encabezado principal
 st.title("💼 Smart Job Tracker")
 st.caption(t("app_caption"))
+
+# Si el usuario NO ha iniciado sesión, mostrar la vista demostrativa de la sección seleccionada y detener
+if st.session_state.user is None:
+    preview_mode.render_unauthenticated_preview(menu_opcion)
+    st.stop()
 
 # Valores exactos de Status requeridos por el proyecto
 STATUS_OPTIONS = [
@@ -947,80 +1107,7 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
                     st.rerun()
 
 
-# ------------------------------------------------------------------------------
-# MENÚ DE NAVEGACIÓN LATERAL (Sidebar) CON INTERNACIONALIZACIÓN (Fase 6.1)
-# ------------------------------------------------------------------------------
-# 1. Selector manual de idioma persistente (visible en todas las pantallas)
-st.sidebar.markdown(f"#### {t('lang_selector_label')}")
-current_lang = st.session_state.get("lang", "es")
-lang_index = 0 if current_lang == "es" else 1
-
-def handle_language_change():
-    selected_option = st.session_state.get("sidebar_lang_selector", "")
-    if not selected_option:
-        return
-    new_lang = "en" if "EN" in selected_option else "es"
-    if new_lang != st.session_state.get("lang"):
-        st.session_state["lang"] = new_lang
-        try:
-            set_user_preferred_language(new_lang)
-        except Exception:
-            pass
-        st.rerun()
-
-st.sidebar.radio(
-    t("lang_selector_label"),
-    options=["🇪🇸 Español (ES)", "🇺🇸 English (EN)"],
-    index=lang_index,
-    key="sidebar_lang_selector",
-    on_change=handle_language_change,
-    horizontal=True,
-    label_visibility="collapsed"
-)
-st.sidebar.divider()
-
-
-# 2. Menú de navegación
-st.sidebar.title(t("nav_title"))
-st.sidebar.caption(t("nav_caption"))
-
-MENU_KEYS = [
-    "add_app",
-    "view_apps",
-    "analyzer",
-    "coach",
-    "cv_improver",
-    "stats",
-    "profile",
-    "dashboard"
-]
-
-menu_label_map = {
-    "add_app": t("nav_add_app"),
-    "view_apps": t("nav_view_apps"),
-    "analyzer": t("nav_analyzer"),
-    "coach": t("nav_coach"),
-    "cv_improver": "✨ CV Improver (AI)" if st.session_state.get("lang") == "en" else "✨ Mejorar CV con IA",
-    "stats": t("nav_stats"),
-    "profile": t("nav_profile"),
-    "dashboard": t("nav_dashboard")
-}
-
-# Al abrir la aplicación, garantizar que la primera vista sea 'add_app' (Add New Application)
-if "nav_initialized" not in st.session_state:
-    st.session_state["main_nav_radio"] = "add_app"
-    st.session_state["nav_initialized"] = True
-
-if st.session_state.get("main_nav_radio") not in MENU_KEYS:
-    st.session_state["main_nav_radio"] = "cv_improver" if "cv_improver" in MENU_KEYS else "add_app"
-
-menu_opcion = st.sidebar.radio(
-    t("nav_select_section"),
-    MENU_KEYS,
-    format_func=lambda k: menu_label_map[k],
-    index=0,
-    key="main_nav_radio"
-)
+# (Menú de navegación lateral ya inicializado y renderizado previamente en render_sidebar)
 
 
 
@@ -1664,7 +1751,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
 # ==============================================================================
 # PÁGINA 2.5: AI JOB ANALYZER & MATCH EVALUATOR (Fase 5.2)
 # ==============================================================================
-elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer", "🎯 Analizar Compatibilidad y Sugerir Cursos", "🎯 Analyze Compatibility & Suggest Courses"):
+elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer", "🎯 Ver Compatibilidad y Sugerir Cursos", "🎯 View Compatibility & Suggest Courses", "🎯 Analizar Compatibilidad y Sugerir Cursos", "🎯 Analyze Compatibility & Suggest Courses"):
     st.subheader(t("analyzer_title"))
     st.caption(t("analyzer_caption"))
 
