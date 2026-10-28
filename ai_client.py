@@ -108,19 +108,28 @@ def _is_timeout_error(exc: Exception) -> bool:
     return False
 
 
+class AITimeBudgetExceeded(RuntimeError):
+    """Excepción elevada cuando una operación o llamada de IA supera su tiempo límite (deadline)."""
+    pass
+
+
 def generate_content_with_retry(
     contents: Any,
     candidate_models: List[str],
     generation_config: Optional[Dict[str, Any]] = None,
     api_key: Optional[str] = None,
     request_options: Optional[Dict[str, Any]] = None,
-    retry_delays: Tuple[float, ...] = (2.0, 4.0, 8.0)
+    retry_delays: Tuple[float, ...] = (2.0, 4.0, 8.0),
+    deadline: Optional[float] = None,
+    timeout_per_call: float = 15.0
 ) -> Any:
     """
     Ejecuta generate_content en Gemini con cascada de modelos y política estricta de reintentos:
-    - Timeout por llamada: 15 s por defecto vía request_options.
+    - Timeout por llamada: 15 s por defecto vía request_options / timeout_per_call.
+    - Deadline: Si se especifica, limita el tiempo total de la llamada; el timeout efectivo
+      es min(timeout_per_call, tiempo_restante) y aborta con AITimeBudgetExceeded si se supera.
     - Errores 429 (ResourceExhausted): Reintenta en el MISMO modelo con espera creciente (ej. 2s, 4s, 8s).
-      Si se agotan los reintentos, eleva RuntimeError amigable y sin trazas técnicas.
+      Si la espera supera el deadline, aborta inmediatamente con AITimeBudgetExceeded en vez de dormir.
     - Errores 404/503/Timeout: Salta INMEDIATAMENTE al siguiente modelo en candidate_models.
     - Otros errores: Registra advertencia y continúa al siguiente modelo de respaldo si existe.
     """
@@ -137,14 +146,18 @@ def generate_content_with_retry(
             "⚠️ Servicio de IA no disponible temporalmente (sin modelos configurados)."
         )
 
-    # Configurar timeout por llamada de 15 s por defecto en request_options
+    # Base timeout configurado
     req_options = dict(request_options) if request_options else {}
-    if "timeout" not in req_options:
-        req_options["timeout"] = 15.0
+    base_timeout = float(req_options.get("timeout", timeout_per_call))
 
     last_error: Optional[Exception] = None
 
     for model_name in candidate_models:
+        # Regla (2): antes de probar cada modelo, si el deadline ya pasó, aborta la cascada
+        if deadline is not None and time.time() >= deadline:
+            logger.warning(f"Presupuesto de tiempo agotado antes de probar modelo '{model_name}'. Abortando cascada.")
+            raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
+
         logger.info(f"Llamando a Gemini con modelo: '{model_name}'...")
         try:
             model = genai.GenerativeModel(
@@ -161,10 +174,21 @@ def generate_content_with_retry(
         # Reintentos con espera creciente SOLO para errores 429
         max_attempts = len(retry_delays) + 1
         for attempt in range(max_attempts):
+            # Regla (3): el timeout efectivo de cada llamada es min(timeout_per_call, tiempo_restante)
+            call_options = dict(req_options)
+            if deadline is not None:
+                tiempo_restante = deadline - time.time()
+                if tiempo_restante <= 0:
+                    raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
+                effective_timeout = min(base_timeout, tiempo_restante)
+                call_options["timeout"] = effective_timeout
+            else:
+                call_options["timeout"] = base_timeout
+
             try:
                 response = model.generate_content(
                     contents,
-                    request_options=req_options
+                    request_options=call_options
                 )
                 if response and (hasattr(response, "text") or hasattr(response, "parts")):
                     return response
@@ -175,6 +199,13 @@ def generate_content_with_retry(
                 if _is_429_error(exc):
                     if attempt < len(retry_delays):
                         delay = retry_delays[attempt]
+                        # Regla (4): antes de cada sleep por 429, si ahora + delay >= deadline, aborta en vez de dormir
+                        if deadline is not None and (time.time() + delay) >= deadline:
+                            logger.warning(
+                                f"Reintento de 429 en '{model_name}' con espera {delay}s excedería el deadline ({deadline}). Abortando."
+                            )
+                            raise AITimeBudgetExceeded("⏱️ El tiempo límite de la operación de IA no permite esperar al reintento de cuota.")
+
                         logger.warning(
                             f"Límite temporal 429 en '{model_name}'. Reintentando en {delay}s "
                             f"(intento {attempt + 1}/{len(retry_delays)})..."
@@ -198,7 +229,7 @@ def generate_content_with_retry(
                 elif _is_timeout_error(exc):
                     # Salto inmediato al siguiente modelo en caso de timeout
                     logger.warning(
-                        f"Timeout ({req_options.get('timeout')}s) en modelo '{model_name}' ({exc}). "
+                        f"Timeout ({call_options.get('timeout')}s) en modelo '{model_name}' ({exc}). "
                         "Saltando inmediatamente al siguiente modelo en cascada..."
                     )
                     break

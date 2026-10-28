@@ -107,7 +107,8 @@ def improve_bullet_point(
     position: str,
     used_verbs: Set[str],
     provider: LLMProvider,
-    language: str = "es"
+    language: str = "es",
+    deadline: Optional[float] = None
 ) -> BulletItem:
     """
     Reescribe una viñeta individual siguiendo las reglas de acción, contexto y resultado en el idioma indicado ('es' o 'en').
@@ -140,7 +141,8 @@ Genera el JSON con el bullet mejorado en español y la sugerencia de métrica si
         data = provider.generate_json(
             prompt=prompt,
             system_prompt=sys_prompt,
-            temperature=0.2
+            temperature=0.2,
+            deadline=deadline
         )
         improved_text = data.get("improved") or bullet_text
         suggestion = data.get("suggestion")
@@ -184,7 +186,12 @@ Genera el JSON con el bullet mejorado en español y la sugerencia de métrica si
         )
 
 
-def enhance_summary(summary_text: str, provider: LLMProvider, language: str = "es") -> str:
+def enhance_summary(
+    summary_text: str,
+    provider: LLMProvider,
+    language: str = "es",
+    deadline: Optional[float] = None
+) -> str:
     """Reescribe el resumen profesional haciéndolo de alto impacto (3-4 líneas) en el idioma seleccionado ('es' o 'en')."""
     if not summary_text or not summary_text.strip():
         return ""
@@ -207,7 +214,8 @@ Genera el resumen profesional mejorado en español."""
         data = provider.generate_json(
             prompt=prompt,
             system_prompt=sys_prompt,
-            temperature=0.3
+            temperature=0.3,
+            deadline=deadline
         )
         return data.get("summary_improved") or summary_text
     except Exception as e:
@@ -233,7 +241,7 @@ def enhance_resume_content(
         if deadline is not None and time.time() >= deadline:
             logger.warning("Tope de tiempo alcanzado antes de mejorar resumen; conservando original.")
         else:
-            resume.summary_improved = enhance_summary(resume.summary, provider, language=language)
+            resume.summary_improved = enhance_summary(resume.summary, provider, language=language, deadline=deadline)
 
     # 2. Mejorar bullets experiencia por experiencia
     for exp in resume.experience:
@@ -258,7 +266,8 @@ def enhance_resume_content(
                     position=exp.position,
                     used_verbs=used_verbs_for_this_company,
                     provider=provider,
-                    language=language
+                    language=language,
+                    deadline=deadline
                 )
                 new_bullets.append(improved_b)
         exp.bullets = new_bullets

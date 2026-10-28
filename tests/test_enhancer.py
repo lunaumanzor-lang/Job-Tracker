@@ -15,7 +15,7 @@ from cv_improver.enhancer import (
 class MockEnhancerProvider(LLMProvider):
     """Mock con lógica predecible para probar reglas de mejora y anti-alucinación."""
 
-    def generate_text(self, prompt: str, system_prompt=None, temperature=0.2, max_tokens=4096) -> str:
+    def generate_text(self, prompt: str, system_prompt=None, temperature=0.2, max_tokens=4096, **kwargs) -> str:
         import json
         if "Resumen profesional original" in prompt:
             return json.dumps({

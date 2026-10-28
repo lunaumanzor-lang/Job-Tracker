@@ -35,7 +35,9 @@ class GeminiProvider(LLMProvider):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.2,
-        max_tokens: int = 4096
+        max_tokens: int = 4096,
+        deadline: Optional[float] = None,
+        timeout_per_call: float = 15.0
     ) -> str:
         """Invoca la API de Gemini usando la función central con reintentos para 429 y salto para 404/503."""
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
@@ -48,7 +50,8 @@ class GeminiProvider(LLMProvider):
                 "max_output_tokens": max_tokens
             },
             api_key=self.api_key,
-            request_options={"timeout": 15.0}
+            deadline=deadline,
+            timeout_per_call=timeout_per_call
         )
         if response and response.text:
             return response.text.strip()

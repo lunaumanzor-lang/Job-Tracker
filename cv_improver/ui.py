@@ -162,7 +162,8 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
             parsed_resume = parse_resume_to_schema(
                 raw_text=raw_text,
                 provider=provider,
-                language=resolved_lang
+                language=resolved_lang,
+                deadline=deadline
             )
         except Exception as parse_err:
             logger.error(f"Error estructurando CV con LLM: {parse_err}")

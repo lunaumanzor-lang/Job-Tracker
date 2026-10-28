@@ -364,7 +364,8 @@ def _sanitize_and_repair_json(json_data: Any, raw_text: str, is_en: bool) -> Dic
 def parse_resume_to_schema(
     raw_text: str,
     provider: Optional[LLMProvider] = None,
-    language: str = "auto"
+    language: str = "auto",
+    deadline: Optional[float] = None
 ) -> ResumeSchema:
     """
     Convierte el texto extraído de un CV en un objeto ResumeSchema validado.
@@ -394,7 +395,8 @@ def parse_resume_to_schema(
             json_data = provider.generate_json(
                 prompt=prompt,
                 system_prompt=sys_prompt,
-                temperature=0.0
+                temperature=0.0,
+                deadline=deadline
             )
             # Reparar y sanear de forma preventiva antes de validar el esquema
             repaired_json = _sanitize_and_repair_json(json_data, raw_text=raw_text, is_en=is_en)
