@@ -1,4 +1,4 @@
-# Dependencias del proyecto AI Job Application Tracker
+# Dependencias del proyecto Smart Job Tracker
 # Fase 2: Manipulación y lectura de Excel a SQLite
 pandas>=2.2.0
 openpyxl>=3.1.0

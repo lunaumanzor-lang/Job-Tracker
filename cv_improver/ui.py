@@ -37,6 +37,8 @@ from .schema import (
     EducationItem,
     SkillCategory
 )
+from .examples import SECTOR_EXAMPLES, load_example_schema
+
 
 
 def load_from_user_profile_database() -> ResumeSchema:
@@ -160,6 +162,7 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto"):
             st.session_state["cv_improver_active_schema"] = enhanced_resume
             st.session_state["cv_improver_language"] = resolved_lang
             st.session_state["cv_improver_bullets_status"] = {}
+            st.session_state["cv_improver_is_example"] = False
             st.session_state.pop("cv_improver_draft_discarded", None)
             persist_active_cv_draft()
             st.toast(f"¡CV analizado y optimizado en {lang_label} con éxito!", icon="🎉")
@@ -181,11 +184,117 @@ def persist_active_cv_draft():
                 "language": st.session_state.get("cv_improver_language", "es"),
                 "filename": st.session_state.get("cv_improver_filename", "CV_Optimizado"),
                 "raw_text": st.session_state.get("cv_improver_raw_text", ""),
-                "selected_cv_template": st.session_state.get("selected_cv_template", "moderna")
+                "selected_cv_template": st.session_state.get("selected_cv_template", "moderna"),
+                "is_example": st.session_state.get("cv_improver_is_example", False)
             }
             save_cv_improver_draft(draft)
         except Exception as e:
             print(f"Aviso al persistir borrador de CV: {e}")
+
+
+def is_resume_example_unedited(resume: ResumeSchema) -> bool:
+    """
+    Verifica si el currículum activo proviene de un ejemplo del sector y aún
+    no ha sido editado con la información real del usuario.
+    """
+    if resume is None:
+        return False
+
+    is_marked = st.session_state.get("cv_improver_is_example", False)
+    filename = st.session_state.get("cv_improver_filename", "")
+    is_example_file = bool(filename and filename.startswith("Ejemplo_"))
+
+    if not is_marked and not is_example_file:
+        return False
+
+    # 1. Si el nombre de contacto sigue vacío
+    has_contact_name = bool(resume.contact and resume.contact.name and resume.contact.name.strip())
+    # 2. Si todavía contiene la marca '[ejemplo]' en resumen, empresa o cargo
+    has_example_tags = (
+        (resume.summary and "[ejemplo]" in resume.summary.lower())
+        or any("[ejemplo]" in (exp.company or "").lower() for exp in resume.experience)
+        or any("[ejemplo]" in (exp.position or "").lower() for exp in resume.experience)
+    )
+    if not has_contact_name or has_example_tags:
+        return True
+
+    # El usuario ya ingresó su nombre y reemplazó las etiquetas de ejemplo
+    st.session_state["cv_improver_is_example"] = False
+    return False
+
+
+def _handle_cv_file_uploaded(uploaded_file, origin_badge: str = "upload"):
+    """
+    Procesa un archivo de CV subido (PDF, Word o TXT) ya sea desde carga manual o desde LinkedIn.
+    Ejecuta validación, extracción de texto (OCR si aplica), detección de idioma y botones de optimización.
+    """
+    if uploaded_file is None:
+        return
+
+    file_bytes = uploaded_file.getvalue()
+    file_name = uploaded_file.name
+
+    try:
+        validate_uploaded_file(file_bytes=file_bytes, filename=file_name)
+
+        import hashlib
+        file_hash = hashlib.md5(file_bytes).hexdigest()
+        current_cached_hash = st.session_state.get("cv_improver_file_hash")
+
+        cached_text = st.session_state.get("cv_improver_raw_text", "")
+        is_suspiciously_short = len(cached_text) < 800 and len(file_bytes) > 20000
+
+        if current_cached_hash != file_hash or not cached_text or is_suspiciously_short:
+            with st.spinner("📄 Leyendo y extrayendo texto del documento (con soporte OCR)..."):
+                raw_text = extract_text_from_file(file_bytes=file_bytes, filename=file_name)
+                st.session_state["cv_improver_filename"] = file_name
+                st.session_state["cv_improver_file_hash"] = file_hash
+                st.session_state["cv_improver_raw_text"] = raw_text
+                st.session_state["cv_improver_is_example"] = False
+                st.session_state.pop("cv_improver_active_schema", None)
+                st.session_state.pop("cv_improver_bullets_status", None)
+
+        raw_cv_text = st.session_state.get("cv_improver_raw_text", "")
+        c_info1, c_info2 = st.columns([3, 1])
+        with c_info1:
+            st.success(f"Archivo **{file_name}** listo para análisis ({len(file_bytes)/1024:.1f} KB · {len(raw_cv_text)} caracteres detectados).")
+        with c_info2:
+            if st.button("🔄 Re-extraer", help="Forzar nueva extracción y OCR si deseas refrescar la lectura", key=f"btn_force_reextract_{origin_badge}", use_container_width=True):
+                st.session_state.pop("cv_improver_file_hash", None)
+                st.session_state.pop("cv_improver_raw_text", None)
+                st.session_state.pop("cv_improver_active_schema", None)
+                st.rerun()
+
+        with st.expander("👁️ Ver texto original detectado en el archivo"):
+            st.text_area("Contenido sin procesar:", value=raw_cv_text, height=130, disabled=True, key=f"raw_text_view_{origin_badge}")
+
+    except FileValidationError as ve:
+        st.error(f"⚠️ Error de validación: {ve}")
+        return
+    except Exception as ex:
+        st.error(f"⚠️ Error al leer el archivo: {ex}")
+        return
+
+    raw_cv_text = st.session_state.get("cv_improver_raw_text", "")
+    detected_cv_lang = detect_resume_language(raw_cv_text) if raw_cv_text else "es"
+
+    if detected_cv_lang == "en":
+        st.info("🌐 **Idioma detectado en tu currículum:** 🇺🇸 **Inglés**. Por defecto optimizaremos tu CV en inglés respetando el idioma nativo de tu documento.")
+    else:
+        st.info("🌐 **Idioma detectado en tu currículum:** 🇪🇸 **Español**.")
+
+    st.caption("Selecciona el idioma en el que deseas analizar y redactar las mejoras:")
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        is_es = (detected_cv_lang == "es")
+        lbl_es = "🇪🇸 Mejorar y Analizar este CV con IA en Español (Detectado)" if is_es else "🇪🇸 Traducir y Analizar este CV en Español"
+        if st.button(lbl_es, type="primary" if is_es else "secondary", use_container_width=True, key=f"btn_run_improver_{origin_badge}_es"):
+            process_and_enhance_cv(st.session_state["cv_improver_raw_text"], target_language="es")
+    with col_btn2:
+        is_en = (detected_cv_lang == "en")
+        lbl_en = "🇺🇸 Mejorar y Analizar este CV con IA en Inglés (Detectado)" if is_en else "🇺🇸 Mejorar y Analizar este CV con IA en Inglés"
+        if st.button(lbl_en, type="primary" if is_en else "secondary", use_container_width=True, key=f"btn_run_improver_{origin_badge}_en"):
+            process_and_enhance_cv(st.session_state["cv_improver_raw_text"], target_language="en")
 
 
 def render_cv_improver_page():
@@ -206,6 +315,7 @@ def render_cv_improver_page():
                 st.session_state["cv_improver_language"] = saved_draft.get("language", "es")
                 st.session_state["cv_improver_filename"] = saved_draft.get("filename", "CV_Optimizado")
                 st.session_state["cv_improver_raw_text"] = saved_draft.get("raw_text", "")
+                st.session_state["cv_improver_is_example"] = saved_draft.get("is_example", False)
                 if "selected_cv_template" in saved_draft:
                     st.session_state["selected_cv_template"] = saved_draft["selected_cv_template"]
         except Exception as e:
@@ -219,149 +329,194 @@ def render_cv_improver_page():
 
 
     # --------------------------------------------------------------------------
-    # PASO 1: ORIGEN DEL CV
+    # PASO 1: ¿CÓMO QUIERES EMPEZAR A CREAR TU CV?
     # --------------------------------------------------------------------------
-    st.markdown("### 1️⃣ Origen del Currículum")
+    st.markdown("### 1️⃣ ¿Cómo quieres empezar a crear tu CV?")
+    st.caption("Selecciona cómo deseas comenzar tu currículum: cargando un documento propio, explorando un ejemplo profesional de tu sector o importando tu perfil desde LinkedIn:")
 
-    tab_upload, tab_from_profile = st.tabs([
-        "📤 Subir un archivo nuevo (PDF, DOCX, TXT)",
-        "📋 Cargar una copia desde My Profile"
+    tab_cargar, tab_ejemplos, tab_linkedin = st.tabs([
+        "📤 Cargar un CV existente",
+        "📚 Empezar con un ejemplo del sector",
+        "💼 Importar desde LinkedIn (PDF)"
     ])
 
-    with tab_upload:
-        uploaded_file = st.file_uploader(
-            "Arrastra o selecciona tu archivo (máx. 5 MB)",
-            type=["pdf", "docx", "txt"],
-            key="cv_improver_file_uploader",
-            help="Formatos admitidos: PDF con texto seleccionable, Word (.docx) o texto plano (.txt)."
+    with tab_cargar:
+        sub_tab_file, sub_tab_profile = st.tabs([
+            "📄 Subir archivo nuevo (PDF, DOCX, TXT)",
+            "📋 Cargar copia desde My Profile"
+        ])
+
+        with sub_tab_file:
+            uploaded_file = st.file_uploader(
+                "Arrastra o selecciona tu archivo (máx. 5 MB)",
+                type=["pdf", "docx", "txt"],
+                key="cv_improver_file_uploader",
+                help="Formatos admitidos: PDF con texto seleccionable, Word (.docx) o texto plano (.txt)."
+            )
+            if uploaded_file is not None:
+                _handle_cv_file_uploaded(uploaded_file, origin_badge="upload")
+
+        with sub_tab_profile:
+            st.caption("Importa una copia en memoria de tus datos actuales de My Profile para visualizarlos y rediseñarlos con las nuevas plantillas:")
+            schema_preview = load_from_user_profile_database()
+            profile_sample = (schema_preview.summary or "") + " " + " ".join([b.original for exp in schema_preview.experience for b in exp.bullets])
+            detected_prof_lang = detect_resume_language(profile_sample) if profile_sample.strip() else "es"
+
+            if detected_prof_lang == "en":
+                st.info("🌐 **Idioma detectado en los datos de My Profile:** 🇺🇸 **Inglés**.")
+            else:
+                st.info("🌐 **Idioma detectado en los datos de My Profile:** 🇪🇸 **Español**.")
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                is_prof_es = (detected_prof_lang == "es")
+                lbl_p_es = "📥 🇪🇸 Importar y Mejorar en Español (Detectado)" if is_prof_es else "📥 🇪🇸 Importar y Mejorar en Español"
+                if st.button(lbl_p_es, type="primary" if is_prof_es else "secondary", key="btn_import_from_profile_copy_es", use_container_width=True):
+                    try:
+                        schema_copy = load_from_user_profile_database()
+                        if not schema_copy.experience and not schema_copy.contact.name:
+                            st.warning("No tienes datos guardados en My Profile. Sube un archivo en la pestaña anterior.")
+                        else:
+                            provider, _ = get_active_llm_provider(
+                                anthropic_key=st.session_state.get("cv_improver_anthropic_key"),
+                                gemini_key=st.session_state.get("cv_improver_gemini_key")
+                            )
+                            if provider:
+                                schema_copy = enhance_resume_content(schema_copy, provider=provider, language="es")
+                            st.session_state["cv_improver_filename"] = "Perfil_Importado_MyProfile"
+                            st.session_state["cv_improver_active_schema"] = schema_copy
+                            st.session_state["cv_improver_language"] = "es"
+                            st.session_state["cv_improver_bullets_status"] = {}
+                            st.session_state["cv_improver_is_example"] = False
+                            st.session_state.pop("cv_improver_draft_discarded", None)
+                            persist_active_cv_draft()
+                            st.toast("Copia importada y optimizada en Español.", icon="✅")
+                            st.rerun()
+                    except Exception as imp_err:
+                        st.error(f"Error al cargar copia de perfil: {imp_err}")
+
+            with col_p2:
+                is_prof_en = (detected_prof_lang == "en")
+                lbl_p_en = "📥 🇺🇸 Importar y Mejorar en Inglés (Detectado)" if is_prof_en else "📥 🇺🇸 Importar y Mejorar en Inglés"
+                if st.button(lbl_p_en, type="primary" if is_prof_en else "secondary", key="btn_import_from_profile_copy_en", use_container_width=True):
+                    try:
+                        schema_copy = load_from_user_profile_database()
+                        if not schema_copy.experience and not schema_copy.contact.name:
+                            st.warning("No tienes datos guardados en My Profile. Sube un archivo en la pestaña anterior.")
+                        else:
+                            provider, _ = get_active_llm_provider(
+                                anthropic_key=st.session_state.get("cv_improver_anthropic_key"),
+                                gemini_key=st.session_state.get("cv_improver_gemini_key")
+                            )
+                            if provider:
+                                schema_copy = enhance_resume_content(schema_copy, provider=provider, language="en")
+                            st.session_state["cv_improver_filename"] = "Perfil_Importado_MyProfile"
+                            st.session_state["cv_improver_active_schema"] = schema_copy
+                            st.session_state["cv_improver_language"] = "en"
+                            st.session_state["cv_improver_bullets_status"] = {}
+                            st.session_state["cv_improver_is_example"] = False
+                            st.session_state.pop("cv_improver_draft_discarded", None)
+                            persist_active_cv_draft()
+                            st.toast("Copia importada y optimizada en Inglés.", icon="✅")
+                            st.rerun()
+                    except Exception as imp_err:
+                        st.error(f"Error al cargar copia de perfil: {imp_err}")
+
+    with tab_ejemplos:
+        st.markdown("#### 📚 Plantillas de Ejemplo Fijas por Sector (Sin llamadas a IA)")
+        st.caption(
+            "Selecciona un currículum modelo prediseñado con las mejores prácticas del sector. "
+            "**No consume llamadas a IA** y carga datos genéricos de ejemplo listos para editar y personalizar de inmediato."
         )
 
-        if uploaded_file is not None:
-            file_bytes = uploaded_file.getvalue()
-            file_name = uploaded_file.name
+        col_sec_sel, col_sec_btn = st.columns([3, 2])
+        sector_keys = list(SECTOR_EXAMPLES.keys())
+        with col_sec_sel:
+            selected_key = st.selectbox(
+                "Elige un sector o especialidad:",
+                options=sector_keys,
+                format_func=lambda k: f"{SECTOR_EXAMPLES[k]['icon']} {SECTOR_EXAMPLES[k]['title']} — {SECTOR_EXAMPLES[k]['role']}",
+                key="cv_improver_sector_select"
+            )
 
-            try:
-                validate_uploaded_file(file_bytes=file_bytes, filename=file_name)
+        info = SECTOR_EXAMPLES[selected_key]
+        example_preview = load_example_schema(selected_key)
 
-                import hashlib
-                file_hash = hashlib.md5(file_bytes).hexdigest()
-                current_cached_hash = st.session_state.get("cv_improver_file_hash")
+        with col_sec_btn:
+            st.write("")
+            st.write("")
+            if st.button(
+                f"🚀 Cargar ejemplo de {info['title']}",
+                key="btn_load_sector_example",
+                type="primary",
+                use_container_width=True
+            ):
+                schema_ex = load_example_schema(selected_key)
+                st.session_state["cv_improver_filename"] = f"Ejemplo_{selected_key.title()}"
+                st.session_state["cv_improver_active_schema"] = schema_ex
+                st.session_state["cv_improver_language"] = "es"
+                st.session_state["cv_improver_bullets_status"] = {}
+                st.session_state["cv_improver_raw_text"] = schema_ex.raw_text or ""
+                st.session_state["cv_improver_is_example"] = True
+                st.session_state.pop("cv_improver_draft_discarded", None)
+                persist_active_cv_draft()
+                st.toast(f"¡Plantilla de '{info['title']}' cargada con éxito en el editor!", icon="✨")
+                st.rerun()
 
-                cached_text = st.session_state.get("cv_improver_raw_text", "")
-                is_suspiciously_short = len(cached_text) < 800 and len(file_bytes) > 20000
+        with st.container(border=True):
+            st.markdown(f"**{info['icon']} {info['title']}** — *{info['role']}*")
+            st.write(info["description"])
 
-                if current_cached_hash != file_hash or not cached_text or is_suspiciously_short:
-                    with st.spinner("📄 Leyendo y extrayendo texto del documento (con soporte OCR)..."):
-                        raw_text = extract_text_from_file(file_bytes=file_bytes, filename=file_name)
-                        st.session_state["cv_improver_filename"] = file_name
-                        st.session_state["cv_improver_file_hash"] = file_hash
-                        st.session_state["cv_improver_raw_text"] = raw_text
-                        st.session_state.pop("cv_improver_active_schema", None)
-                        st.session_state.pop("cv_improver_bullets_status", None)
+            with st.expander("👁️ Ver contenido y estructura del ejemplo", expanded=False):
+                c_p1, c_p2 = st.columns(2)
+                with c_p1:
+                    st.markdown("**Resumen Profesional:**")
+                    st.write(example_preview.summary)
+                    st.markdown("**Experiencias Laborales:**")
+                    for exp in example_preview.experience:
+                        st.markdown(f"- **{exp.position}** en *{exp.company}* ({exp.start_date} - {exp.end_date})")
+                        for b in exp.bullets[:2]:
+                            st.caption(f"  • {b.original}")
+                with c_p2:
+                    st.markdown("**Habilidades Principales:**")
+                    for cat in example_preview.skills:
+                        st.markdown(f"- **{cat.category}:** {', '.join(cat.skills[:5])}")
+                    st.markdown("**Educación:**")
+                    for edu in example_preview.education:
+                        st.markdown(f"- {edu.degree} · *{edu.institution}*")
+                    if example_preview.languages:
+                        st.markdown("**Idiomas:**")
+                        for lang in example_preview.languages:
+                            st.caption(f"• {lang.language}: {lang.proficiency}")
 
-                raw_cv_text = st.session_state.get("cv_improver_raw_text", "")
-                c_info1, c_info2 = st.columns([3, 1])
-                with c_info1:
-                    st.success(f"Archivo **{file_name}** listo para análisis ({len(file_bytes)/1024:.1f} KB · {len(raw_cv_text)} caracteres detectados).")
-                with c_info2:
-                    if st.button("🔄 Re-extraer", help="Forzar nueva extracción y OCR si deseas refrescar la lectura", key="btn_force_reextract_upload", use_container_width=True):
-                        st.session_state.pop("cv_improver_file_hash", None)
-                        st.session_state.pop("cv_improver_raw_text", None)
-                        st.session_state.pop("cv_improver_active_schema", None)
-                        st.rerun()
+    with tab_linkedin:
+        st.markdown("#### 💼 Importar Perfil desde LinkedIn (PDF)")
+        st.caption(
+            "Dado que LinkedIn no ofrece una integración API pública para perfiles de usuario, "
+            "puedes descargar tu perfil oficial en PDF y subirlo aquí. "
+            "Entrará exactamente por el mismo motor de parseo y optimización que cualquier otro CV."
+        )
 
-                with st.expander("👁️ Ver texto original detectado en el archivo"):
-                    st.text_area("Contenido sin procesar:", value=raw_cv_text, height=130, disabled=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                **📌 Guía rápida para descargar tu CV desde LinkedIn:**
+                1. Inicia sesión en **LinkedIn** y ve a tu **Perfil** (haz clic en tu foto o nombre).
+                2. En la tarjeta principal debajo de tu foto de portada, haz clic en el botón **Más** (`More...`) situado junto a *"Añadir sección"*.
+                3. En el menú desplegable, haz clic en **Guardar como PDF** (`Save to PDF`).
+                4. LinkedIn generará y descargará inmediatamente tu currículum oficial en formato `.pdf`.
+                5. **Sube ese archivo PDF** en el recuadro inferior para procesarlo:
+                """
+            )
 
-            except FileValidationError as ve:
-                st.error(f"⚠️ Error de validación: {ve}")
-            except Exception as ex:
-                st.error(f"⚠️ Error al leer el archivo: {ex}")
-
-            raw_cv_text = st.session_state.get("cv_improver_raw_text", "")
-            detected_cv_lang = detect_resume_language(raw_cv_text) if raw_cv_text else "es"
-
-            if detected_cv_lang == "en":
-                st.info("🌐 **Idioma detectado en tu currículum:** 🇺🇸 **Inglés**. Por defecto optimizaremos tu CV en inglés respetando el idioma nativo de tu documento.")
-            else:
-                st.info("🌐 **Idioma detectado en tu currículum:** 🇪🇸 **Español**.")
-
-            st.caption("Selecciona el idioma en el que deseas analizar y redactar las mejoras:")
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                is_es = (detected_cv_lang == "es")
-                lbl_es = "🇪🇸 Mejorar y Analizar este CV con IA en Español (Detectado)" if is_es else "🇪🇸 Traducir y Analizar este CV en Español"
-                if st.button(lbl_es, type="primary" if is_es else "secondary", use_container_width=True, key="btn_run_improver_upload_es"):
-                    process_and_enhance_cv(st.session_state["cv_improver_raw_text"], target_language="es")
-            with col_btn2:
-                is_en = (detected_cv_lang == "en")
-                lbl_en = "🇺🇸 Mejorar y Analizar este CV con IA en Inglés (Detectado)" if is_en else "🇺🇸 Mejorar y Analizar este CV con IA en Inglés"
-                if st.button(lbl_en, type="primary" if is_en else "secondary", use_container_width=True, key="btn_run_improver_upload_en"):
-                    process_and_enhance_cv(st.session_state["cv_improver_raw_text"], target_language="en")
-
-    with tab_from_profile:
-        st.caption("Importa una copia en memoria de tus datos actuales de My Profile para visualizarlos y rediseñarlos con las nuevas plantillas:")
-        schema_preview = load_from_user_profile_database()
-        profile_sample = (schema_preview.summary or "") + " " + " ".join([b.original for exp in schema_preview.experience for b in exp.bullets])
-        detected_prof_lang = detect_resume_language(profile_sample) if profile_sample.strip() else "es"
-
-        if detected_prof_lang == "en":
-            st.info("🌐 **Idioma detectado en los datos de My Profile:** 🇺🇸 **Inglés**.")
-        else:
-            st.info("🌐 **Idioma detectado en los datos de My Profile:** 🇪🇸 **Español**.")
-
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            is_prof_es = (detected_prof_lang == "es")
-            lbl_p_es = "📥 🇪🇸 Importar y Mejorar en Español (Detectado)" if is_prof_es else "📥 🇪🇸 Importar y Mejorar en Español"
-            if st.button(lbl_p_es, type="primary" if is_prof_es else "secondary", key="btn_import_from_profile_copy_es", use_container_width=True):
-                try:
-                    schema_copy = load_from_user_profile_database()
-                    if not schema_copy.experience and not schema_copy.contact.name:
-                        st.warning("No tienes datos guardados en My Profile. Sube un archivo en la pestaña anterior.")
-                    else:
-                        provider, _ = get_active_llm_provider(
-                            anthropic_key=st.session_state.get("cv_improver_anthropic_key"),
-                            gemini_key=st.session_state.get("cv_improver_gemini_key")
-                        )
-                        if provider:
-                            schema_copy = enhance_resume_content(schema_copy, provider=provider, language="es")
-                        st.session_state["cv_improver_filename"] = "Perfil_Importado_MyProfile"
-                        st.session_state["cv_improver_active_schema"] = schema_copy
-                        st.session_state["cv_improver_language"] = "es"
-                        st.session_state["cv_improver_bullets_status"] = {}
-                        st.session_state.pop("cv_improver_draft_discarded", None)
-                        persist_active_cv_draft()
-                        st.toast("Copia importada y optimizada en Español.", icon="✅")
-                        st.rerun()
-                except Exception as imp_err:
-                    st.error(f"Error al cargar copia de perfil: {imp_err}")
-
-        with col_p2:
-            is_prof_en = (detected_prof_lang == "en")
-            lbl_p_en = "📥 🇺🇸 Importar y Mejorar en Inglés (Detectado)" if is_prof_en else "📥 🇺🇸 Importar y Mejorar en Inglés"
-            if st.button(lbl_p_en, type="primary" if is_prof_en else "secondary", key="btn_import_from_profile_copy_en", use_container_width=True):
-                try:
-                    schema_copy = load_from_user_profile_database()
-                    if not schema_copy.experience and not schema_copy.contact.name:
-                        st.warning("No tienes datos guardados en My Profile. Sube un archivo en la pestaña anterior.")
-                    else:
-                        provider, _ = get_active_llm_provider(
-                            anthropic_key=st.session_state.get("cv_improver_anthropic_key"),
-                            gemini_key=st.session_state.get("cv_improver_gemini_key")
-                        )
-                        if provider:
-                            schema_copy = enhance_resume_content(schema_copy, provider=provider, language="en")
-                        st.session_state["cv_improver_filename"] = "Perfil_Importado_MyProfile"
-                        st.session_state["cv_improver_active_schema"] = schema_copy
-                        st.session_state["cv_improver_language"] = "en"
-                        st.session_state["cv_improver_bullets_status"] = {}
-                        st.session_state.pop("cv_improver_draft_discarded", None)
-                        persist_active_cv_draft()
-                        st.toast("Copia importada y optimizada en Inglés.", icon="✅")
-                        st.rerun()
-                except Exception as imp_err:
-                    st.error(f"Error al cargar copia de perfil: {imp_err}")
+        linkedin_file = st.file_uploader(
+            "Arrastra o selecciona el archivo PDF descargado de tu perfil de LinkedIn",
+            type=["pdf"],
+            key="cv_improver_linkedin_uploader",
+            help="Sube el archivo PDF obtenido desde 'Más → Guardar como PDF' en tu perfil de LinkedIn."
+        )
+        if linkedin_file is not None:
+            _handle_cv_file_uploaded(linkedin_file, origin_badge="linkedin")
 
     # --------------------------------------------------------------------------
     # PASO 2: PANEL DE MEJORAS Y GALERÍA DE PLANTILLAS
@@ -382,11 +537,15 @@ def render_cv_improver_page():
             if st.button("🗑️ Descartar borrador y reiniciar", key="btn_clear_cv_improver_draft", use_container_width=True, help="Elimina el borrador de trabajo actual en Supabase para empezar desde cero"):
                 from database import delete_cv_improver_draft
                 delete_cv_improver_draft()
-                for k in ["cv_improver_active_schema", "cv_improver_bullets_status", "cv_improver_language", "cv_improver_filename", "cv_improver_raw_text", "cv_improver_file_hash"]:
+                for k in ["cv_improver_active_schema", "cv_improver_bullets_status", "cv_improver_language", "cv_improver_filename", "cv_improver_raw_text", "cv_improver_file_hash", "cv_improver_is_example"]:
                     st.session_state.pop(k, None)
                 st.session_state["cv_improver_draft_discarded"] = True
                 st.toast("Borrador descartado con éxito.", icon="ℹ️")
                 st.rerun()
+
+        # AVISO VISIBLE CUANDO EL CV ES UN EJEMPLO CON DATOS FICTICIOS
+        if is_resume_example_unedited(resume):
+            st.warning("⚠️ **Este es un ejemplo con datos ficticios. Reemplázalo con tu información antes de descargar o guardar**")
 
         # BARRA DE IDIOMA ACTIVO Y CAMBIO RÁPIDO
         active_lang = st.session_state.get("cv_improver_language", "es")
@@ -719,49 +878,66 @@ def render_cv_improver_page():
 
             # BOTÓN PRINCIPAL DE DESCARGA EN PDF CON DISEÑO IDÉNTICO
             st.markdown("##### 📥 Descargar tu Currículum en PDF")
-            st.success(f"✨ **Descarga en PDF Lista:** El documento se descargará directamente en **archivo .pdf** con el **100% de la fidelidad visual de la plantilla {current_template.capitalize()}** (mismos colores, cuadros de habilidades y stack, divisiones y tipografía idéntica a la previsualización).")
 
-            try:
-                pdf_bytes, pages, engine = render_cv_to_pdf(
-                    resume=export_resume,
-                    template_name=current_template,
-                    accent_color=selected_color,
-                    language=active_lang
-                )
-                clean_name = f"CV_{export_resume.contact.name.replace(' ', '_')}_{current_template.capitalize()}.pdf"
-                st.download_button(
-                    label=f"📥 DESCARGAR CV EN PDF ({current_template.capitalize()} · {pages} pág{'s' if pages > 1 else ''})",
-                    data=pdf_bytes,
-                    file_name=clean_name,
-                    mime="application/pdf",
-                    type="primary",
-                    use_container_width=True,
-                    key="btn_download_cv_pdf_main_action"
-                )
-                st.caption(f"🔒 Archivo: **`{clean_name}`** (Formato PDF oficial) | Motor: `{engine}`.")
-            except Exception as e:
-                st.error(f"Error generando PDF: {e}")
+            is_example_active = is_resume_example_unedited(export_resume)
+            can_download = True
 
-            # Exportación opcional alternativa en Word
-            with st.expander("📄 ¿Deseas también una copia en Microsoft Word (.docx)?", expanded=False):
-                st.caption("Nota: El archivo de Word es un documento de texto editable estándar (.docx). Para conservar el diseño visual idéntico con cuadros, colores y columnas, utiliza el botón principal de PDF arriba.")
+            if is_example_active:
+                st.warning("⚠️ **Este es un ejemplo con datos ficticios. Reemplázalo con tu información antes de descargar o guardar**")
+                confirm_download = st.checkbox(
+                    "Confirmo explícitamente que este currículum contiene datos ficticios de ejemplo y deseo descargarlo de todas formas.",
+                    key="chk_confirm_download_fictitious_example"
+                )
+                can_download = confirm_download
+                if not can_download:
+                    st.info("💡 Para descargar tu currículum en PDF, completa tus datos reales en la pestaña **✏️ Ajuste y Edición** o confirma arriba que contiene datos ficticios marcando la casilla.")
+
+            if can_download:
+                st.success(f"✨ **Descarga en PDF Lista:** El documento se descargará directamente en **archivo .pdf** con el **100% de la fidelidad visual de la plantilla {current_template.capitalize()}** (mismos colores, cuadros de habilidades y stack, divisiones y tipografía idéntica a la previsualización).")
+
                 try:
-                    docx_bytes = render_cv_to_docx(
+                    pdf_bytes, pages, engine = render_cv_to_pdf(
                         resume=export_resume,
-                        accent_hex=selected_color,
+                        template_name=current_template,
+                        accent_color=selected_color,
                         language=active_lang
                     )
-                    clean_name_docx = f"CV_{export_resume.contact.name.replace(' ', '_')}.docx"
+                    raw_slug = (export_resume.contact.name or "").strip().replace(' ', '_')
+                    name_slug = raw_slug if raw_slug else "Ejemplo_CV"
+                    clean_name = f"CV_{name_slug}_{current_template.capitalize()}.pdf"
                     st.download_button(
-                        label="📄 Descargar copia en Word (.docx)",
-                        data=docx_bytes,
-                        file_name=clean_name_docx,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        label=f"📥 DESCARGAR CV EN PDF ({current_template.capitalize()} · {pages} pág{'s' if pages > 1 else ''})",
+                        data=pdf_bytes,
+                        file_name=clean_name,
+                        mime="application/pdf",
+                        type="primary",
                         use_container_width=True,
-                        key="btn_download_docx_optional"
+                        key="btn_download_cv_pdf_main_action"
                     )
+                    st.caption(f"🔒 Archivo: **`{clean_name}`** (Formato PDF oficial) | Motor: `{engine}`.")
                 except Exception as e:
-                    st.error(f"Error generando DOCX: {e}")
+                    st.error(f"Error generando PDF: {e}")
+
+                # Exportación opcional alternativa en Word
+                with st.expander("📄 ¿Deseas también una copia en Microsoft Word (.docx)?", expanded=False):
+                    st.caption("Nota: El archivo de Word es un documento de texto editable estándar (.docx). Para conservar el diseño visual idéntico con cuadros, colores y columnas, utiliza el botón principal de PDF arriba.")
+                    try:
+                        docx_bytes = render_cv_to_docx(
+                            resume=export_resume,
+                            accent_hex=selected_color,
+                            language=active_lang
+                        )
+                        clean_name_docx = f"CV_{name_slug}.docx"
+                        st.download_button(
+                            label="📄 Descargar copia en Word (.docx)",
+                            data=docx_bytes,
+                            file_name=clean_name_docx,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True,
+                            key="btn_download_docx_optional"
+                        )
+                    except Exception as e:
+                        st.error(f"Error generando DOCX: {e}")
 
         # ======================================================================
         # PESTAÑA 2: COMPARATIVA VISUAL DE MEJORAS
@@ -837,6 +1013,22 @@ def render_cv_improver_page():
             st.markdown("#### ✏️ Ajuste y Edición de Entidades")
             st.caption("Verifica o modifica directamente los nombres de empresas, puestos, fechas, educación y habilidades:")
 
+            is_example_active = is_resume_example_unedited(resume)
+            if is_example_active:
+                st.warning("⚠️ **Este es un ejemplo con datos ficticios. Reemplázalo con tu información antes de descargar o guardar**")
+
+            # EDITAR DATOS DE CONTACTO Y ENLACES
+            with st.expander("👤 Datos de Contacto (Nombre, Correo, Teléfono, Ubicación, Enlaces)", expanded=True):
+                c_c1, c_c2 = st.columns(2)
+                with c_c1:
+                    resume.contact.name = st.text_input("Nombre Completo *:", value=resume.contact.name or "", key="edit_contact_name")
+                    resume.contact.email = st.text_input("Correo Electrónico:", value=resume.contact.email or "", key="edit_contact_email")
+                    resume.contact.phone = st.text_input("Teléfono / WhatsApp:", value=resume.contact.phone or "", key="edit_contact_phone")
+                with c_c2:
+                    resume.contact.location = st.text_input("Ubicación (Ciudad, País):", value=resume.contact.location or "", key="edit_contact_location")
+                    resume.contact.linkedin = st.text_input("LinkedIn (URL):", value=resume.contact.linkedin or "", key="edit_contact_linkedin")
+                    resume.contact.github = st.text_input("GitHub / Portafolio (URL):", value=resume.contact.github or resume.contact.portfolio or "", key="edit_contact_github")
+
             # EDITAR EXPERIENCIAS
             with st.expander("💼 Experiencias Laborales (Fechas, Empresas, Puestos)", expanded=True):
                 for exp_idx, exp in enumerate(resume.experience):
@@ -901,6 +1093,54 @@ def render_cv_improver_page():
                     s_str = ", ".join(sc.skills)
                     ed_s = st.text_input("Habilidades (separadas por coma):", value=s_str, key=f"ed_sk_{sc_idx}")
                     sc.skills = [s.strip() for s in ed_s.split(",") if s.strip()]
+
+            # GUARDAR EN EL PERFIL MAESTRO CON PROTECCIÓN ESTRICTA
+            st.divider()
+            with st.expander("💾 Guardar datos en My Profile", expanded=False):
+                st.caption("Actualiza los datos maestros de tu cuenta en My Profile a partir de este currículum.")
+                from database import get_user_profile, save_user_profile, get_all_experiences
+                existing_profile = get_user_profile() or {}
+                has_real_profile = bool(
+                    existing_profile.get("full_name")
+                    or existing_profile.get("email")
+                    or existing_profile.get("summary")
+                    or get_all_experiences()
+                )
+
+                can_save_profile = True
+                confirm_save_profile = False
+
+                if is_example_active:
+                    st.warning("⚠️ **Este es un ejemplo con datos ficticios. Reemplázalo con tu información antes de descargar o guardar**")
+                    if has_real_profile:
+                        st.error("🛡️ **Operación Bloqueada:** Tu cuenta ya cuenta con un perfil real guardado. Para proteger tus datos, nunca se sobrescribe el perfil real del usuario con datos de un ejemplo.")
+                        can_save_profile = False
+                    else:
+                        confirm_save_profile = st.checkbox(
+                            "Confirmo explícitamente que este currículum contiene datos ficticios y deseo guardarlo en mi perfil de todas formas.",
+                            key="chk_confirm_profile_fictitious_save"
+                        )
+                        can_save_profile = confirm_save_profile
+                        if not can_save_profile:
+                            st.info("💡 Completa tus datos reales en el formulario superior o marca la confirmación para habilitar el guardado.")
+
+                first_exp = resume.experience[0].position if resume.experience else None
+                if st.button("💾 Guardar en My Profile", disabled=not can_save_profile, key="btn_save_active_to_profile"):
+                    if is_example_active and has_real_profile:
+                        st.error("Operación bloqueada: Nunca se sobrescribe el perfil real del usuario con datos del ejemplo.")
+                    elif is_example_active and not confirm_save_profile:
+                        st.error("No se puede guardar en el perfil sin una confirmación explícita de que contiene datos ficticios.")
+                    else:
+                        save_user_profile(
+                            full_name=resume.contact.name or None,
+                            current_title=first_exp,
+                            email=resume.contact.email or None,
+                            phone=resume.contact.phone or None,
+                            location=resume.contact.location or None,
+                            summary=resume.summary_improved or resume.summary or None
+                        )
+                        st.success("✅ Perfil maestro actualizado con éxito en My Profile.")
+                        st.rerun()
 
         # Auto-guardado en Supabase del progreso actual
         persist_active_cv_draft()

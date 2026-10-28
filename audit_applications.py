@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # Script de Auditoría y Conciliación (Solo Lectura): SQLite vs Supabase
 # ==============================================================================
 

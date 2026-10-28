@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 5.6c: Generador de PDF ATS-Friendly con xhtml2pdf y Jinja2 (pdf_generator.py)
 # ==============================================================================
 

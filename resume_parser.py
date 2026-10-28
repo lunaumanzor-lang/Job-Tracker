@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 5.1: Módulo de Extracción de Texto de Resumes (resume_parser.py)
 # ==============================================================================
 

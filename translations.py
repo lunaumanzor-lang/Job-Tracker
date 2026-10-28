@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 6.1: Internacionalización (i18n) - Diccionarios de Traducción Centralizados
 # ==============================================================================
 
@@ -11,7 +11,7 @@ import streamlit as st
 # Elementos que NUNCA deben traducirse en ningún idioma
 # ------------------------------------------------------------------------------
 NEVER_TRANSLATE: Set[str] = {
-    "AI Job Application Tracker",
+    "Smart Job Tracker",
     "Ghosted"
 }
 
@@ -22,10 +22,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "nav_title": "🧭 Navegación",
         "nav_caption": "Job Search & AI Intelligence",
         "nav_select_section": "Selecciona una sección:",
-        "nav_dashboard": "📊 Dashboard",
+        "nav_dashboard": "📊 Career Dashboard",
         "nav_add_app": "➕ Agregar Nueva Aplicación",
         "nav_view_apps": "📋 Ver y Gestionar Aplicaciones",
-        "nav_analyzer": "🤖 AI Job Analyzer",
+        "nav_analyzer": "🎯 Ver Compatibilidad y Sugerir Cursos",
         "nav_coach": "🎯 Prepararme para este puesto",
         "nav_cv_builder": "📄 CV Builder",
         "nav_stats": "📈 Estadísticas",
@@ -200,7 +200,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "analyzer_api_key_help": "Obtén tu clave gratuita en https://aistudio.google.com/app/apikey",
         "analyzer_no_url_help": "Esta postulación no tiene URL guardada",
         "analyzer_no_notes_help": "Esta postulación no tiene notas guardadas",
-        "analyzer_title": "🤖 AI Job Analyzer & Match Evaluator",
+        "analyzer_title": "🎯 Ver Compatibilidad y Sugerir Cursos",
         "analyzer_caption": "Evalúa vacantes contra tu Perfil Maestro, detecta compatibilidad y genera sugerencias de estudio con cursos gratuitos.",
         "analyzer_input_tab_url": "🔗 Pegar Enlace (URL)",
         "analyzer_input_tab_text": "📝 Pegar Texto de la Oferta",
@@ -506,10 +506,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "nav_title": "🧭 Navigation",
         "nav_caption": "Job Search & AI Intelligence",
         "nav_select_section": "Select a section:",
-        "nav_dashboard": "📊 Dashboard",
+        "nav_dashboard": "📊 Career Dashboard",
         "nav_add_app": "➕ Add New Application",
         "nav_view_apps": "📋 View & Manage Applications",
-        "nav_analyzer": "🤖 AI Job Analyzer",
+        "nav_analyzer": "🎯 View Compatibility & Suggest Courses",
         "nav_coach": "🎯 Prepare me for this job",
         "nav_cv_builder": "📄 CV Builder",
         "nav_stats": "📈 Statistics",
@@ -692,7 +692,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "analyzer_api_key_help": "Get your free key at https://aistudio.google.com/app/apikey",
         "analyzer_no_url_help": "This application does not have a saved URL",
         "analyzer_no_notes_help": "This application does not have saved notes",
-        "analyzer_title": "🤖 AI Job Analyzer & Match Evaluator",
+        "analyzer_title": "🎯 View Compatibility & Suggest Courses",
         "analyzer_caption": "Evaluate vacancies against your Master Profile, calculate fit, and get free course suggestions to bridge gaps.",
         "analyzer_input_tab_url": "🔗 Paste Link (URL)",
         "analyzer_input_tab_text": "📝 Paste Job Description Text",

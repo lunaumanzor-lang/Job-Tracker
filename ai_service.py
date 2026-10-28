@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 5: Servicio de Inteligencia Artificial con Gemini LLM (ai_service.py)
 # ==============================================================================
 
@@ -8,6 +8,7 @@ import re
 import json
 import logging
 import urllib.parse as urlparse
+import copy
 from typing import Dict, Any, Optional, Tuple, List
 import google.generativeai as genai
 
@@ -32,6 +33,11 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
     genai.configure(api_key=api_key)
 
     candidatos_preferidos = [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
         "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
         "gemini-2.0-flash",
@@ -962,21 +968,21 @@ def generate_interview_questions(
     if language == "en":
         prompt = f"""
 You are an expert Technical Hiring Manager and seasoned interviewer evaluating tech candidates.
-You will prepare a battery of 6 interview questions for a candidate applying to:
+You will prepare a battery of 7 interview questions for a candidate applying to:
 - Role: {position}
 - Company: {company}
 - Job Required Skills: {vacante_skills_str}
 - Candidate's Declared Experience & Skills: {candidato_skills_str}
 - Additional Notes: {notes or 'N/A'}
 
-DISTRIBUTION RULES FOR THE 6 QUESTIONS:
+DISTRIBUTION RULES FOR THE 7 QUESTIONS:
 1. Two (2) technical questions on the candidate's core strengths (validating deep production-level expertise).
 2. Two (2) questions on technologies or concepts where the role requires experience but the candidate has skill gaps or beginner proficiency (evaluating fundamentals, curiosity, and adaptability).
-3. Two (2) situational, architectural or incident resolution questions (Troubleshooting / STAR methodology).
+3. Three (3) situational, architectural, teamwork or incident resolution questions (Troubleshooting / STAR methodology).
 
 OUTPUT RULES:
 - The entire output MUST BE IN ENGLISH (questions, tips, categories).
-- Respond ONLY with a valid JSON array of objects.
+- Respond ONLY with a valid JSON array of exactly 7 objects.
 - Do NOT include conversational text or explanation outside the JSON array.
 - Follow strictly this structure:
 
@@ -993,21 +999,21 @@ OUTPUT RULES:
     else:
         prompt = f"""
 Eres un Hiring Manager y entrevistador técnico experto en perfiles tecnológicos.
-Vas a preparar una batería de 6 preguntas de entrevista para el candidato que postula a:
+Vas a preparar una batería de 7 preguntas de entrevista para el candidato que postula a:
 - Puesto: {position}
 - Empresa: {company}
 - Habilidades solicitadas por la vacante: {vacante_skills_str}
 - Experiencia declarada del candidato: {candidato_skills_str}
 - Notas adicionales: {notes or 'N/A'}
 
-REGLAS DE DISTRIBUCIÓN DE LAS 6 PREGUNTAS:
+REGLAS DE DISTRIBUCIÓN DE LAS 7 PREGUNTAS:
 1. Dos (2) preguntas técnicas sobre las fortalezas del candidato (para validar dominio profundo en producción).
 2. Dos (2) preguntas sobre áreas o tecnologías donde el puesto pide requisitos pero el candidato tiene brechas o nivel inicial (para evaluar adaptabilidad y fundamentos).
-3. Dos (2) preguntas situacionales, de arquitectura o resolución de incidentes (Troubleshooting / Metodología STAR).
+3. Tres (3) preguntas situacionales, de arquitectura, trabajo en equipo o resolución de incidentes (Troubleshooting / Metodología STAR).
 
 REGLAS DE SALIDA:
 - La salida DEBE ESTAR COMPLETAMENTE EN ESPAÑOL.
-- Responde ÚNICAMENTE con un array JSON válido de objetos.
+- Responde ÚNICAMENTE con un array JSON válido de exactamente 7 objetos.
 - NO agregues texto conversacional ni explicaciones fuera del JSON.
 - Sigue exactamente esta estructura:
 

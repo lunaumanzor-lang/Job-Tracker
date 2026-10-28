@@ -50,3 +50,21 @@ Lista de tareas prioritarias y requerimientos técnicos antes del lanzamiento p�
   - `SESSION_ENCRYPTION_KEY`
   - `GEMINI_API_KEY`
 - [ ] Verificar que ningún archivo local `.streamlit/secrets.toml` o `.env` se incluya en el control de versiones (mantener en `.gitignore`).
+
+---
+
+## 7. 🛡️ Seguridad Web Scraping (Obligatorio antes del despliegue)
+- [ ] **Cerrar DNS rebinding en job_scraper.py fijando la IP validada en la conexión (HTTPAdapter con DNS pinning, manteniendo SNI y verificación del certificado), y probar con URLs reales de Indeed y LinkedIn.**
+- [ ] *Motivo:* Elimina la ventana de vulnerabilidad TOCTOU (Time-of-Check to Time-of-Use) en la resolución DNS para garantizar que la conexión TCP se realice exclusivamente contra la IP validada contra SSRF, conservando SNI y la verificación TLS/SSL.
+
+---
+
+## 8. 🤖 Control de Cuota, Rate Limiting y Conteo de Llamadas a la IA
+- [ ] **Limitar y contabilizar el botón "Generar 7 nuevas preguntas" (Interview Coach):**
+  - Cada clic ejecuta una llamada completa a la IA (Gemini). Sin un límite de tasa (*rate limit*) o tiempo de espera (*cooldown*), un usuario puede pulsar el botón repetidas veces seguidas, consumiendo cuota rápidamente o generando costos imprevistos de API.
+- [ ] **Implementar Conteo de Uso de IA por Usuario:**
+  - Crear registro/conteo de solicitudes consumidas por usuario en Supabase.
+  - Implementar límites por período (ej. máximo N regeneraciones de preguntas por día o intervalo mínimo entre clics).
+  - Mostrar indicador en la interfaz del estado de consumo o advertencia de espera tras pulsar el botón.
+
+

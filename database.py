@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROYECTO: AI Job Application Tracker
+# PROYECTO: Smart Job Tracker
 # FASE 2: Base de Datos Relacional con SQLite (database.py)
 # ==============================================================================
 
@@ -8,9 +8,12 @@ import re
 import hashlib
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Dict, Optional, Any
+import logging
 import pandas as pd
 from cryptography.fernet import Fernet
 from supabase import Client
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------------------
@@ -2010,7 +2013,6 @@ def cleanup_expired_sessions() -> None:
         client.table("auth_sessions").delete().lt("expires_at", now_iso).execute()
     except Exception as e:
         print(f"Error en cleanup_expired_sessions (service_role): {e}")
-
 
 
 if __name__ == "__main__":
