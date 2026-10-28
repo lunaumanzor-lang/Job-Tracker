@@ -11,7 +11,7 @@ class ContactInfo(BaseModel):
     """Información de contacto del candidato."""
     model_config = ConfigDict(extra="ignore")
 
-    name: str = Field(default="Candidato", description="Nombre completo del candidato")
+    name: str = Field(default="", description="Nombre completo del candidato")
     email: Optional[str] = Field(None, description="Correo electrónico de contacto")
     phone: Optional[str] = Field(None, description="Número de teléfono")
     location: Optional[str] = Field(None, description="Ciudad, país o modalidad de residencia")
@@ -22,8 +22,8 @@ class ContactInfo(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def sanitize_name(cls, v: Any) -> str:
-        if not v or not str(v).strip() or str(v).lower() in ("none", "null"):
-            return "Candidato"
+        if v is None or str(v).lower() in ("none", "null"):
+            return ""
         return str(v).strip()
 
 
@@ -181,7 +181,7 @@ class ResumeSchema(BaseModel):
     """Esquema raíz completo del currículum vitae."""
     model_config = ConfigDict(extra="ignore")
 
-    contact: ContactInfo = Field(default_factory=lambda: ContactInfo(name="Candidato"), description="Datos de contacto")
+    contact: ContactInfo = Field(default_factory=ContactInfo, description="Datos de contacto")
     summary: Optional[str] = Field(None, description="Resumen profesional original")
     summary_improved: Optional[str] = Field(None, description="Resumen profesional mejorado orientado a impacto")
     experience: List[ExperienceItem] = Field(default_factory=list, description="Historial laboral")
@@ -197,5 +197,5 @@ class ResumeSchema(BaseModel):
         if isinstance(v, ContactInfo):
             return v
         if not v or not isinstance(v, dict):
-            return {"name": "Candidato"}
+            return {"name": ""}
         return v
