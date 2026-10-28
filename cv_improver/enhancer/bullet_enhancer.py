@@ -6,6 +6,7 @@ y la regla crítica anti-alucinación (nunca inventar métricas).
 
 import logging
 import re
+import time
 from typing import Optional, Set, Dict, Any, List
 from ..schema import ResumeSchema, ExperienceItem, BulletItem
 from .provider_base import LLMProvider
@@ -214,29 +215,52 @@ Genera el resumen profesional mejorado en español."""
         return summary_text
 
 
-def enhance_resume_content(resume: ResumeSchema, provider: LLMProvider, language: str = "es") -> ResumeSchema:
+def enhance_resume_content(
+    resume: ResumeSchema,
+    provider: LLMProvider,
+    language: str = "es",
+    deadline: Optional[float] = None
+) -> ResumeSchema:
     """
     Mejora todos los bullets y el resumen profesional de un ResumeSchema en el idioma solicitado ('es' o 'en').
     Retorna el mismo ResumeSchema con campos 'improved' y 'suggestion' completados.
+    Si se especifica un deadline y el tiempo expira, aplica un fallback determinista inmediato sin llamar a la IA.
     """
+    is_en = (language == "en")
+
     # 1. Mejorar resumen profesional
     if resume.summary:
-        resume.summary_improved = enhance_summary(resume.summary, provider, language=language)
+        if deadline is not None and time.time() >= deadline:
+            logger.warning("Tope de tiempo alcanzado antes de mejorar resumen; conservando original.")
+        else:
+            resume.summary_improved = enhance_summary(resume.summary, provider, language=language)
 
     # 2. Mejorar bullets experiencia por experiencia
     for exp in resume.experience:
         used_verbs_for_this_company: Set[str] = set()
         new_bullets = []
         for b in exp.bullets:
-            improved_b = improve_bullet_point(
-                bullet_text=b.original,
-                company=exp.company,
-                position=exp.position,
-                used_verbs=used_verbs_for_this_company,
-                provider=provider,
-                language=language
-            )
-            new_bullets.append(improved_b)
+            if deadline is not None and time.time() >= deadline:
+                logger.warning(f"Tope de tiempo alcanzado en {exp.company}; aplicando fallback determinista para viñetas.")
+                cleaned = b.original.strip()
+                for phrase in WEAK_PHRASES:
+                    if cleaned.lower().startswith(phrase):
+                        cleaned = cleaned[len(phrase):].strip()
+                        cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
+                        break
+                has_numbers = bool(re.search(r"\d+%?", b.original))
+                sug = None if has_numbers else ("Can you quantify this result with a metric, percentage, or measurable impact?" if is_en else "¿Puedes cuantificar el resultado con alguna métrica o porcentaje?")
+                new_bullets.append(BulletItem(original=b.original, improved=cleaned, suggestion=sug))
+            else:
+                improved_b = improve_bullet_point(
+                    bullet_text=b.original,
+                    company=exp.company,
+                    position=exp.position,
+                    used_verbs=used_verbs_for_this_company,
+                    provider=provider,
+                    language=language
+                )
+                new_bullets.append(improved_b)
         exp.bullets = new_bullets
 
     return resume

@@ -47,7 +47,8 @@ class GeminiProvider(LLMProvider):
                 "temperature": temperature,
                 "max_output_tokens": max_tokens
             },
-            api_key=self.api_key
+            api_key=self.api_key,
+            request_options={"timeout": 15.0}
         )
         if response and response.text:
             return response.text.strip()

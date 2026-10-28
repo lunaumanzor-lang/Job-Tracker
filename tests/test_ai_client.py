@@ -15,7 +15,8 @@ from ai_client import (
     get_ai_api_key,
     generate_content_with_retry,
     _is_429_error,
-    _is_404_or_503_error
+    _is_404_or_503_error,
+    _is_timeout_error
 )
 
 
@@ -135,3 +136,51 @@ def test_api_key_resolution():
         with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key"}):
             assert get_ai_api_key("gemini") == "secret-gemini-key"
             assert get_ai_api_key("anthropic") == "secret-claude-key"
+
+
+def test_timeout_classification_and_immediate_jump():
+    # Classification tests
+    class Fake504(Exception):
+        code = 504
+
+    class DeadlineExceeded(Exception):
+        pass
+
+    assert _is_timeout_error(Fake504("Gateway Timeout"))
+    assert _is_timeout_error(DeadlineExceeded("Deadline expired before operation could complete"))
+    assert _is_timeout_error(Exception("504 Deadline expired"))
+    assert _is_timeout_error(Exception("Connection timed out"))
+    assert not _is_timeout_error(Exception("404 Not Found"))
+    assert not _is_timeout_error(Exception("429 Rate limit"))
+
+    # Immediate jump on timeout
+    models_tried = []
+    received_options = []
+
+    class MockModelTimeout:
+        def __init__(self, model_name, **kwargs):
+            self.model_name = model_name
+            models_tried.append(model_name)
+
+        def generate_content(self, *args, **kwargs):
+            received_options.append(kwargs.get("request_options"))
+            if self.model_name == "model-timeout":
+                exc = DeadlineExceeded("504 Deadline expired")
+                exc.code = 504
+                raise exc
+            resp = MagicMock()
+            resp.text = "Success after timeout fallback"
+            return resp
+
+    with patch("ai_client.genai.GenerativeModel", side_effect=MockModelTimeout):
+        res = generate_content_with_retry(
+            contents="test prompt",
+            candidate_models=["model-timeout", "model-healthy"],
+            api_key="fake-key"
+        )
+        assert res.text == "Success after timeout fallback"
+        assert models_tried == ["model-timeout", "model-healthy"]
+        # Verify 15s default timeout was passed
+        assert received_options[0] == {"timeout": 15.0}
+        assert received_options[1] == {"timeout": 15.0}
+

@@ -94,6 +94,20 @@ def _is_404_or_503_error(exc: Exception) -> bool:
     return False
 
 
+def _is_timeout_error(exc: Exception) -> bool:
+    """Verifica si la excepción corresponde a un timeout o DeadlineExceeded (504/408/Deadline)."""
+    code = getattr(exc, "code", None)
+    if code in (504, 408):
+        return True
+    exc_type = type(exc).__name__
+    if exc_type in ("DeadlineExceeded", "TimeoutError", "ConnectTimeout", "ReadTimeout"):
+        return True
+    msg = str(exc).lower()
+    if "deadline" in msg or "timeout" in msg or "timed out" in msg or "504" in msg:
+        return True
+    return False
+
+
 def generate_content_with_retry(
     contents: Any,
     candidate_models: List[str],
@@ -104,9 +118,10 @@ def generate_content_with_retry(
 ) -> Any:
     """
     Ejecuta generate_content en Gemini con cascada de modelos y política estricta de reintentos:
+    - Timeout por llamada: 15 s por defecto vía request_options.
     - Errores 429 (ResourceExhausted): Reintenta en el MISMO modelo con espera creciente (ej. 2s, 4s, 8s).
       Si se agotan los reintentos, eleva RuntimeError amigable y sin trazas técnicas.
-    - Errores 404/503 (NotFound / Unavailable): Salta INMEDIATAMENTE al siguiente modelo en candidate_models.
+    - Errores 404/503/Timeout: Salta INMEDIATAMENTE al siguiente modelo en candidate_models.
     - Otros errores: Registra advertencia y continúa al siguiente modelo de respaldo si existe.
     """
     key = api_key or get_ai_api_key("gemini")
@@ -121,6 +136,11 @@ def generate_content_with_retry(
         raise RuntimeError(
             "⚠️ Servicio de IA no disponible temporalmente (sin modelos configurados)."
         )
+
+    # Configurar timeout por llamada de 15 s por defecto en request_options
+    req_options = dict(request_options) if request_options else {}
+    if "timeout" not in req_options:
+        req_options["timeout"] = 15.0
 
     last_error: Optional[Exception] = None
 
@@ -142,10 +162,10 @@ def generate_content_with_retry(
         max_attempts = len(retry_delays) + 1
         for attempt in range(max_attempts):
             try:
-                kwargs = {}
-                if request_options:
-                    kwargs["request_options"] = request_options
-                response = model.generate_content(contents, **kwargs)
+                response = model.generate_content(
+                    contents,
+                    request_options=req_options
+                )
                 if response and (hasattr(response, "text") or hasattr(response, "parts")):
                     return response
                 logger.warning(f"Respuesta vacía recibida del modelo '{model_name}'.")
@@ -172,6 +192,13 @@ def generate_content_with_retry(
                     # Salto al siguiente modelo solo para 404/503
                     logger.warning(
                         f"Modelo '{model_name}' no disponible ({exc}). "
+                        "Saltando inmediatamente al siguiente modelo en cascada..."
+                    )
+                    break
+                elif _is_timeout_error(exc):
+                    # Salto inmediato al siguiente modelo en caso de timeout
+                    logger.warning(
+                        f"Timeout ({req_options.get('timeout')}s) en modelo '{model_name}' ({exc}). "
                         "Saltando inmediatamente al siguiente modelo en cascada..."
                     )
                     break

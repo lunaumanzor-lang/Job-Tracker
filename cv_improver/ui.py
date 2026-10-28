@@ -7,10 +7,14 @@ escaparate de plantillas llamativas con personalización en vivo y exportación 
 
 import os
 import copy
+import time
+import logging
 from typing import Dict
 from dotenv import load_dotenv
 import streamlit as st
 import streamlit.components.v1 as components
+
+logger = logging.getLogger(__name__)
 
 # Cargar variables de entorno de .env (para GEMINI_API_KEY)
 load_dotenv()
@@ -128,10 +132,15 @@ def prepare_export_ready_resume(resume: ResumeSchema, bullets_status: Dict[str, 
     return clean_resume
 
 
-def process_and_enhance_cv(raw_text: str, target_language: str = "auto"):
+def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_duration: float = 90.0):
     """
     Orquesta el análisis estructural y la mejora de viñetas en el idioma especificado ('es', 'en' o 'auto').
+    Aplica un tope de tiempo total (90 s). Si la IA no responde o se supera el límite de tiempo,
+    devuelve y carga el CV estructurado sin mejoras automáticas para evitar bloqueos.
     """
+    start_time = time.time()
+    deadline = start_time + max_duration
+
     if not target_language or target_language == "auto":
         resolved_lang = detect_resume_language(raw_text)
     else:
@@ -143,32 +152,82 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto"):
     )
     lang_label = "Inglés" if resolved_lang == "en" else "Español"
     with st.spinner(f"🧠 Analizando estructura con {p_name} y optimizando viñetas en {lang_label}..."):
+        parsed_resume = None
+        enhanced_resume = None
+        timed_out = False
+        ai_failed = False
+
+        # 1. Análisis estructural del documento
         try:
             parsed_resume = parse_resume_to_schema(
                 raw_text=raw_text,
                 provider=provider,
                 language=resolved_lang
             )
-            if provider:
-                enhanced_resume = enhance_resume_content(parsed_resume, provider=provider, language=resolved_lang)
-            else:
-                from .enhancer.bullet_enhancer import enhance_resume_content as fallback_enhance
-                from .enhancer.provider_base import LLMProvider
-                class HeuristicDummy(LLMProvider):
-                    def generate_text(self, p, s=None, temperature=0.2, max_tokens=4096):
-                        raise RuntimeError("Sin API activa")
-                enhanced_resume = fallback_enhance(parsed_resume, provider=HeuristicDummy(), language=resolved_lang)
-
-            st.session_state["cv_improver_active_schema"] = enhanced_resume
-            st.session_state["cv_improver_language"] = resolved_lang
-            st.session_state["cv_improver_bullets_status"] = {}
-            st.session_state["cv_improver_is_example"] = False
-            st.session_state.pop("cv_improver_draft_discarded", None)
-            persist_active_cv_draft()
-            st.toast(f"¡CV analizado y optimizado en {lang_label} con éxito!", icon="🎉")
-            st.rerun()
         except Exception as parse_err:
-            st.error(f"Error procesando el currículum en {lang_label}: {parse_err}")
+            logger.error(f"Error estructurando CV con LLM: {parse_err}")
+            from .parsers.extractor import _fallback_heuristic_parse
+            parsed_resume = _fallback_heuristic_parse(raw_text, language=resolved_lang)
+            parsed_resume.raw_text = raw_text
+            ai_failed = True
+
+        # Verificar si el análisis inicial ya superó el tope total de 90s
+        elapsed = time.time() - start_time
+        if elapsed >= max_duration:
+            timed_out = True
+        elif provider and not ai_failed:
+            # 2. Mejora de viñetas y resumen con límite de tiempo
+            try:
+                enhanced_resume = enhance_resume_content(
+                    parsed_resume,
+                    provider=provider,
+                    language=resolved_lang,
+                    deadline=deadline
+                )
+                if (time.time() - start_time) >= max_duration:
+                    timed_out = True
+            except Exception as enhance_err:
+                logger.error(f"Error optimizando contenido con IA: {enhance_err}")
+                ai_failed = True
+                enhanced_resume = parsed_resume
+        else:
+            # Sin proveedor activo o IA no disponible
+            from .enhancer.bullet_enhancer import enhance_resume_content as fallback_enhance
+            from .enhancer.provider_base import LLMProvider
+            class HeuristicDummy(LLMProvider):
+                def generate_text(self, p, s=None, temperature=0.2, max_tokens=4096):
+                    raise RuntimeError("Sin API activa")
+            enhanced_resume = fallback_enhance(parsed_resume, provider=HeuristicDummy(), language=resolved_lang)
+
+        final_resume = enhanced_resume or parsed_resume
+        if final_resume is None:
+            from .parsers.extractor import _fallback_heuristic_parse
+            final_resume = _fallback_heuristic_parse(raw_text, language=resolved_lang)
+            final_resume.raw_text = raw_text
+
+        st.session_state["cv_improver_active_schema"] = final_resume
+        st.session_state["cv_improver_language"] = resolved_lang
+        st.session_state["cv_improver_bullets_status"] = {}
+        st.session_state["cv_improver_is_example"] = False
+        st.session_state.pop("cv_improver_draft_discarded", None)
+        persist_active_cv_draft()
+
+        if timed_out:
+            st.session_state["cv_improver_notice"] = (
+                "⏱️ Se superó el tope de tiempo total de 90 s para la optimización con IA. "
+                "Tu currículum ha sido cargado con la información extraída sin mejoras automáticas para que puedas editarlo de inmediato."
+            )
+            st.toast("Tope de 90s superado. CV cargado sin mejoras automáticas.", icon="⚠️")
+        elif ai_failed:
+            st.session_state["cv_improver_notice"] = (
+                "⚠️ El servicio de IA no respondió o no estuvo disponible a tiempo. "
+                "Tu currículum fue cargado con su estructura extraída sin mejoras automáticas."
+            )
+            st.toast("IA no disponible. CV cargado sin mejoras automáticas.", icon="ℹ️")
+        else:
+            st.toast(f"¡CV analizado y optimizado en {lang_label} con éxito!", icon="🎉")
+
+        st.rerun()
 
 
 def persist_active_cv_draft():
@@ -301,6 +360,9 @@ def render_cv_improver_page():
     """Renderiza la sección completa, gráfica y de alto impacto de CV Improver."""
     st.title("✨ CV Improver: Diseños de Alto Impacto y Optimización con IA")
     st.caption("Crea un currículum moderno, limpio y espaciado que destaque ante reclutadores y sistemas ATS con plantillas contemporáneas.")
+
+    if "cv_improver_notice" in st.session_state:
+        st.warning(st.session_state.pop("cv_improver_notice"))
 
     # --------------------------------------------------------------------------
     # RESTAURACIÓN AUTOMÁTICA DEL BORRADOR GUARDADO EN SUPABASE

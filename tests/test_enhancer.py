@@ -137,3 +137,42 @@ def test_fallback_when_provider_fails():
     # Debe eliminar 'Responsable de' en el fallback sin romperse
     assert not item.improved.lower().startswith("responsable de")
     assert item.suggestion is not None
+
+
+def test_enhance_resume_content_deadline_fallback():
+    """Verifica que si se supera el deadline, enhance_resume_content recurre al fallback determinista sin llamar a la IA."""
+    call_count = {"count": 0}
+
+    class CountingProvider(LLMProvider):
+        def generate_text(self, prompt, system_prompt=None, temperature=0.2, max_tokens=4096):
+            call_count["count"] += 1
+            return "{}"
+
+    provider = CountingProvider()
+    resume = ResumeSchema(
+        contact=ContactInfo(name="Carlos Test", email="carlos@example.com"),
+        summary="Resumen de prueba",
+        experience=[
+            ExperienceItem(
+                company="Empresa C",
+                position="Developer",
+                bullets=[
+                    BulletItem(original="Responsable de monitorear servidores"),
+                    BulletItem(original="Desarrollé APIs REST")
+                ]
+            )
+        ]
+    )
+
+    # Pasamos un deadline ya expirado (hace 10 segundos)
+    import time
+    expired_deadline = time.time() - 10.0
+    res = enhance_resume_content(resume, provider, deadline=expired_deadline)
+
+    # No debe haberse llamado a la IA
+    assert call_count["count"] == 0
+    # Los bullets deben haber sido procesados con el fallback determinista
+    assert len(res.experience[0].bullets) == 2
+    assert not res.experience[0].bullets[0].improved.lower().startswith("responsable de")
+    assert res.summary_improved is None  # Resumen conservó el original sin alterar
+
