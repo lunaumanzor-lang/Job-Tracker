@@ -10,26 +10,19 @@ import logging
 import urllib.parse as urlparse
 import copy
 from typing import Dict, Any, Optional, Tuple, List
-from dotenv import load_dotenv
 import google.generativeai as genai
 
 from database import SKILL_CATEGORIES
-from ai_client import generate_content_with_retry, get_ai_api_key
-
-# Cargar variables de entorno desde el archivo .env en el directorio actual
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+from ai_client import get_ai_api_key, generate_content_with_retry
 
 logger = logging.getLogger(__name__)
 
 
 def get_api_key() -> Optional[str]:
     """
-    Obtiene la API key de Gemini buscando en orden:
-    1. Variable de entorno GEMINI_API_KEY
-    2. Variable de entorno GOOGLE_API_KEY
+    Obtiene la API key de Gemini desde el módulo centralizado ai_client.
     """
-    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    return get_ai_api_key("gemini")
 
 
 def get_generative_model(api_key: str) -> genai.GenerativeModel:
@@ -231,12 +224,7 @@ def extract_skills_and_profile_from_resume(
     """
     key = api_key or get_api_key()
     if not key:
-        raise ValueError(
-            "No se encontró la clave de API de Gemini (GEMINI_API_KEY). "
-            "Por favor ingrésala en la pantalla o agrégala en tu archivo .env."
-        )
-
-    genai.configure(api_key=key)
+        raise ValueError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Resolución de idioma: si no se especifica o es 'auto', detectar del texto
     if not target_language or target_language.lower() == "auto":
@@ -408,34 +396,16 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
         "gemini-flash-latest"
     ]
 
-    raw_text = None
-    ultimo_error = None
-
-    for nombre_modelo in modelos_a_probar:
-        try:
-            logger.info(f"Intentando llamar a Gemini con modelo: {nombre_modelo}...")
-            model = genai.GenerativeModel(
-                model_name=nombre_modelo,
-                generation_config={"temperature": 0.2}
-            )
-            response = model.generate_content(prompt)
-            if response and response.text:
-                raw_text = response.text.strip()
-                logger.info(f"Respuesta exitosa con modelo: {nombre_modelo}")
-                break
-        except Exception as e:
-            logger.warning(f"Error con modelo {nombre_modelo}: {e}")
-            ultimo_error = e
-            continue
+    response = generate_content_with_retry(
+        contents=prompt,
+        candidate_models=modelos_a_probar,
+        generation_config={"temperature": 0.2},
+        api_key=key
+    )
+    raw_text = response.text.strip() if response and response.text else None
 
     if not raw_text:
-        err_str = str(ultimo_error)
-        if "429" in err_str or "quota" in err_str.lower():
-            raise RuntimeError(
-                "⏳ Se alcanzó el límite temporal de 5 peticiones por minuto de la capa gratuita de Gemini. "
-                "Por favor espera 30 segundos y vuelve a presionar el botón."
-            )
-        raise RuntimeError(f"Error al comunicarse con el modelo de IA: {err_str}")
+        raise RuntimeError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # --------------------------------------------------------------------------
     # PARSEO DEFENSIVO DE JSON
@@ -574,12 +544,7 @@ def analyze_job_description(
     """
     key = api_key or get_api_key()
     if not key:
-        raise ValueError(
-            "No se encontró la clave de API de Gemini (GEMINI_API_KEY). "
-            "Por favor ingrésala o agrégala en tu archivo .env."
-        )
-
-    genai.configure(api_key=key)
+        raise ValueError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Determinar si el insumo es texto libre del CV o lista de habilidades estructuradas
     if candidate_text and candidate_text.strip():
@@ -682,34 +647,16 @@ REGLAS DE RESPUESTA:
         "gemini-flash-latest"
     ]
 
-    raw_text = None
-    ultimo_error = None
-
-    for nombre_modelo in modelos_a_probar:
-        try:
-            logger.info(f"Analizando vacante con modelo Gemini: {nombre_modelo}...")
-            model = genai.GenerativeModel(
-                model_name=nombre_modelo,
-                generation_config={"temperature": 0.2}
-            )
-            response = model.generate_content(prompt)
-            if response and response.text:
-                raw_text = response.text.strip()
-                logger.info(f"Análisis exitoso con modelo: {nombre_modelo}")
-                break
-        except Exception as e:
-            logger.warning(f"Error con modelo {nombre_modelo}: {e}")
-            ultimo_error = e
-            continue
+    response = generate_content_with_retry(
+        contents=prompt,
+        candidate_models=modelos_a_probar,
+        generation_config={"temperature": 0.2},
+        api_key=key
+    )
+    raw_text = response.text.strip() if response and response.text else None
 
     if not raw_text:
-        err_str = str(ultimo_error)
-        if "429" in err_str or "quota" in err_str.lower():
-            raise RuntimeError(
-                "⏳ Se alcanzó el límite de peticiones por minuto de Gemini. "
-                "Espera 30 segundos y vuelve a presionar el botón de análisis."
-            )
-        raise RuntimeError(f"Error al comunicarse con Gemini: {err_str}")
+        raise RuntimeError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Parseo defensivo
     texto_limpio = raw_text
@@ -829,9 +776,7 @@ def generate_skill_gaps_study(
 
     key = api_key or get_api_key()
     if not key:
-        raise ValueError("No se encontró la clave de API de Gemini.")
-
-    genai.configure(api_key=key)
+        raise ValueError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     skills_str = ", ".join(missing_skills) if isinstance(missing_skills, list) else str(missing_skills)
 
@@ -931,20 +876,16 @@ Ejemplo exacto de formato:
         "gemini-flash-latest"
     ]
 
-    raw_text = None
-    for m in modelos_a_probar:
-        try:
-            model = genai.GenerativeModel(m, generation_config={"temperature": 0.2})
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                raw_text = resp.text.strip()
-                break
-        except Exception as e:
-            logger.warning(f"Error generando skill gaps study con {m}: {e}")
-            continue
+    resp = generate_content_with_retry(
+        contents=prompt,
+        candidate_models=modelos_a_probar,
+        generation_config={"temperature": 0.2},
+        api_key=key
+    )
+    raw_text = resp.text.strip() if resp and resp.text else None
 
     if not raw_text:
-        raise RuntimeError("No se pudo generar el análisis de brechas. Intenta de nuevo en unos segundos.")
+        raise RuntimeError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Parseo defensivo
     texto_limpio = raw_text
@@ -1016,9 +957,7 @@ def generate_interview_questions(
     """
     key = api_key or get_api_key()
     if not key:
-        raise ValueError("No se encontró la clave de API de Gemini.")
-
-    genai.configure(api_key=key)
+        raise ValueError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Resumen de skills de la vacante
     vacante_skills_str = ", ".join(s.get("skill", "") for s in app_skills) if app_skills else "Requerimientos generales del puesto"
@@ -1098,20 +1037,16 @@ REGLAS DE SALIDA:
         "gemini-flash-latest"
     ]
 
-    raw_text = None
-    for m in modelos_a_probar:
-        try:
-            model = genai.GenerativeModel(m, generation_config={"temperature": 0.4})
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                raw_text = resp.text.strip()
-                break
-        except Exception as e:
-            logger.warning(f"Error generando preguntas con {m}: {e}")
-            continue
+    resp = generate_content_with_retry(
+        contents=prompt,
+        candidate_models=modelos_a_probar,
+        generation_config={"temperature": 0.4},
+        api_key=key
+    )
+    raw_text = resp.text.strip() if resp and resp.text else None
 
     if not raw_text:
-        raise RuntimeError("No se pudieron generar las preguntas de entrevista. Intenta nuevamente.")
+        raise RuntimeError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Parseo defensivo del JSON
     texto_limpio = raw_text
@@ -1165,9 +1100,7 @@ def evaluate_interview_answer(
     """
     key = api_key or get_api_key()
     if not key:
-        raise ValueError("No se encontró la clave de API de Gemini.")
-
-    genai.configure(api_key=key)
+        raise ValueError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     if language == "en":
         prompt = f"""
@@ -1253,20 +1186,16 @@ REGLAS DE FORMATO:
         "gemini-flash-latest"
     ]
 
-    raw_text = None
-    for m in modelos_a_probar:
-        try:
-            model = genai.GenerativeModel(m, generation_config={"temperature": 0.2})
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                raw_text = resp.text.strip()
-                break
-        except Exception as e:
-            logger.warning(f"Error evaluando respuesta con {m}: {e}")
-            continue
+    resp = generate_content_with_retry(
+        contents=prompt,
+        candidate_models=modelos_a_probar,
+        generation_config={"temperature": 0.2},
+        api_key=key
+    )
+    raw_text = resp.text.strip() if resp and resp.text else None
 
     if not raw_text:
-        raise RuntimeError("No se pudo obtener la evaluación de la respuesta. Intenta de nuevo.")
+        raise RuntimeError("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde.")
 
     # Parseo defensivo
     texto_limpio = raw_text
@@ -1456,7 +1385,6 @@ Bullet actual:
     # Llamada real con cascada de modelos Gemini
     active_key = api_key or get_api_key()
     if active_key:
-        genai.configure(api_key=active_key)
         modelos_a_probar = [
             "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
@@ -1465,17 +1393,19 @@ Bullet actual:
             "gemini-3.5-flash",
             "gemini-flash-latest"
         ]
-        for m in modelos_a_probar:
-            try:
-                model = genai.GenerativeModel(m, generation_config={"temperature": 0.25})
-                resp = model.generate_content(prompt)
-                if resp and resp.text:
-                    texto = resp.text.strip().lstrip("•-* ").strip().strip('"').strip("'")
-                    if texto:
-                        return texto
-            except Exception as e:
-                logger.warning(f"Error reescribiendo bullet con {m}: {e}")
-                continue
+        try:
+            resp = generate_content_with_retry(
+                contents=prompt,
+                candidate_models=modelos_a_probar,
+                generation_config={"temperature": 0.25},
+                api_key=active_key
+            )
+            if resp and resp.text:
+                texto = resp.text.strip().lstrip("•-* ").strip().strip('"').strip("'")
+                if texto:
+                    return texto
+        except Exception as e:
+            logger.warning(f"Error reescribiendo bullet con IA: {e}")
 
     # Fallback determinista de respaldo si no hay API Key o falla temporalmente la conexión
     if is_en:
@@ -1541,7 +1471,6 @@ Texto de la vacante:
 \"\"\"
 """
 
-    genai.configure(api_key=active_key)
     modelos = [
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",
@@ -1550,21 +1479,24 @@ Texto de la vacante:
         "gemini-flash-latest"
     ]
 
-    for mod_name in modelos:
-        try:
-            model = genai.GenerativeModel(mod_name, generation_config={"temperature": 0.1})
-            resp = model.generate_content(prompt)
-            if resp and resp.text:
-                raw_json = resp.text.strip()
-                # Limpiar bloques markdown ```json ... ``` si los hubiese
-                raw_json = re.sub(r"^```(?:json)?\s*", "", raw_json, flags=re.MULTILINE)
-                raw_json = re.sub(r"\s*```$", "", raw_json, flags=re.MULTILINE).strip()
-                
-                # Encontrar el primer { y el último }
-                start_idx = raw_json.find("{")
-                end_idx = raw_json.rfind("}")
-                if start_idx != -1 and end_idx != -1:
-                    raw_json = raw_json[start_idx:end_idx+1]
+    try:
+        resp = generate_content_with_retry(
+            contents=prompt,
+            candidate_models=modelos,
+            generation_config={"temperature": 0.1},
+            api_key=active_key
+        )
+        if resp and resp.text:
+            raw_json = resp.text.strip()
+            # Limpiar bloques markdown ```json ... ``` si los hubiese
+            raw_json = re.sub(r"^```(?:json)?\s*", "", raw_json, flags=re.MULTILINE)
+            raw_json = re.sub(r"\s*```$", "", raw_json, flags=re.MULTILINE).strip()
+            
+            # Encontrar el primer { y el último }
+            start_idx = raw_json.find("{")
+            end_idx = raw_json.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                raw_json = raw_json[start_idx:end_idx+1]
 
                 datos = json.loads(raw_json)
                 if isinstance(datos, dict):
@@ -1586,8 +1518,8 @@ Texto de la vacante:
                     datos["currency"] = curr
 
                     return datos
-        except Exception as ex:
-            logger.warning(f"Intento con modelo {mod_name} en parse_job_details_with_ai falló: {ex}")
+    except Exception as ex:
+        logger.warning(f"parse_job_details_with_ai no pudo estructurar datos: {ex}")
 
     # Fallback básico si todos los modelos fallan
     return {

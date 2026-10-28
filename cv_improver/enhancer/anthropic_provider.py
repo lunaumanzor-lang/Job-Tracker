@@ -3,10 +3,10 @@ Implementación de LLMProvider utilizando la API oficial de Anthropic.
 Obtiene la clave de API desde la variable de entorno ANTHROPIC_API_KEY o explícitamente.
 """
 
-import os
 from typing import Optional
 import anthropic
 from .provider_base import LLMProvider
+from ai_client import get_ai_api_key
 
 
 class AnthropicProvider(LLMProvider):
@@ -17,11 +17,10 @@ class AnthropicProvider(LLMProvider):
         api_key: Optional[str] = None,
         model: str = "claude-3-5-haiku-20241022"
     ):
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key or get_ai_api_key("anthropic")
         if not self.api_key:
             raise ValueError(
-                "No se encontró la clave de API de Anthropic. Configura la variable de entorno "
-                "ANTHROPIC_API_KEY o pásala al inicializar AnthropicProvider."
+                "No se encontró la clave de API de Anthropic en el servidor ni en el entorno."
             )
         self.model = model
         self.client = anthropic.Anthropic(api_key=self.api_key)

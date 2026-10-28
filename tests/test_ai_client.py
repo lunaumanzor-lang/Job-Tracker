@@ -1,0 +1,137 @@
+"""
+Test suite for ai_client.py:
+- get_ai_api_key resolution
+- 429 backoff retry on same model
+- 404 / 503 immediate model jumping
+- Clean error messaging
+"""
+
+import os
+import time
+from unittest.mock import MagicMock, patch
+import pytest
+
+from ai_client import (
+    get_ai_api_key,
+    generate_content_with_retry,
+    _is_429_error,
+    _is_404_or_503_error
+)
+
+
+def test_error_classification():
+    # 429 tests
+    class Fake429(Exception):
+        code = 429
+
+    assert _is_429_error(Fake429("Rate limit exceeded"))
+    assert _is_429_error(Exception("ResourceExhausted: 429 Quota exceeded"))
+    assert _is_429_error(Exception("Rate limit reached, please slow down"))
+    assert not _is_429_error(Exception("Model not found 404"))
+    assert not _is_429_error(Exception("503 Service Unavailable"))
+
+    # 404 / 503 tests
+    class Fake404(Exception):
+        code = 404
+
+    class Fake503(Exception):
+        code = 503
+
+    assert _is_404_or_503_error(Fake404("Not found"))
+    assert _is_404_or_503_error(Fake503("Service Unavailable"))
+    assert _is_404_or_503_error(Exception("models/gemini-old is not found"))
+    assert _is_404_or_503_error(Exception("503 No capacity available for model"))
+    assert not _is_404_or_503_error(Fake429("Rate limit"))
+
+
+def test_429_backoff_and_no_model_jump():
+    models_tried = []
+    sleeps = []
+
+    class MockModel:
+        def __init__(self, model_name, **kwargs):
+            self.model_name = model_name
+            models_tried.append(model_name)
+
+        def generate_content(self, *args, **kwargs):
+            # Always raise 429
+            exc = Exception("429 ResourceExhausted: Quota exceeded")
+            exc.code = 429
+            raise exc
+
+    with patch("ai_client.genai.GenerativeModel", side_effect=MockModel):
+        with patch("time.sleep", side_effect=lambda s: sleeps.append(s)):
+            with pytest.raises(RuntimeError) as exc_info:
+                generate_content_with_retry(
+                    contents="test",
+                    candidate_models=["model-primary", "model-fallback"],
+                    api_key="fake-key",
+                    retry_delays=(2.0, 4.0, 8.0)
+                )
+
+            msg = str(exc_info.value)
+            # Rule 3: clean message, no technical trace
+            assert "límite temporal" in msg or "límite" in msg
+            assert "Traceback" not in msg
+            assert "ResourceExhausted" not in msg
+
+    # Verify that it slept (2.0, 4.0, 8.0)
+    assert sleeps == [2.0, 4.0, 8.0], f"Expected [2.0, 4.0, 8.0], got {sleeps}"
+
+    # Verify that it did NOT jump to model-fallback for 429!
+    assert models_tried == ["model-primary"], "Must NOT jump to fallback model on 429 error!"
+
+
+def test_404_503_immediate_model_jump():
+    models_tried = []
+    sleeps = []
+
+    class MockModelJump:
+        def __init__(self, model_name, **kwargs):
+            self.model_name = model_name
+            models_tried.append(model_name)
+
+        def generate_content(self, *args, **kwargs):
+            if self.model_name == "model-1-404":
+                exc = Exception("404 Model not found")
+                exc.code = 404
+                raise exc
+            elif self.model_name == "model-2-503":
+                exc = Exception("503 UNAVAILABLE: No capacity available")
+                exc.code = 503
+                raise exc
+            else:
+                resp = MagicMock()
+                resp.text = "Success from healthy model!"
+                return resp
+
+    with patch("ai_client.genai.GenerativeModel", side_effect=MockModelJump):
+        with patch("time.sleep", side_effect=lambda s: sleeps.append(s)):
+            res = generate_content_with_retry(
+                contents="test prompt",
+                candidate_models=["model-1-404", "model-2-503", "model-3-success"],
+                api_key="fake-key"
+            )
+            assert res.text == "Success from healthy model!"
+
+    # Verify no sleeps occurred because jumps on 404/503 are immediate
+    assert sleeps == [], "Jump on 404/503 should NOT sleep!"
+    assert models_tried == ["model-1-404", "model-2-503", "model-3-success"]
+
+
+def test_api_key_resolution():
+    # 1. Probar fallback a os.getenv cuando st.secrets no contiene la clave
+    with patch("ai_client.st", None):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key", "ANTHROPIC_API_KEY": "env-claude-key"}):
+            k_g = get_ai_api_key("gemini")
+            k_a = get_ai_api_key("anthropic")
+            assert k_g == "env-gemini-key"
+            assert k_a == "env-claude-key"
+
+    # 2. Probar prioridad de st.secrets sobre os.getenv
+    mock_secrets = {"GEMINI_API_KEY": "secret-gemini-key", "ANTHROPIC_API_KEY": "secret-claude-key"}
+    with patch("ai_client.st") as mock_st:
+        mock_st.secrets = mock_secrets
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key"}):
+            assert get_ai_api_key("gemini") == "secret-gemini-key"
+            assert get_ai_api_key("anthropic") == "secret-claude-key"
