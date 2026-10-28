@@ -9,6 +9,7 @@ import json
 import base64
 import time
 from datetime import datetime, date
+from typing import Optional
 import streamlit as st
 import streamlit.components.v1 as components
 import urllib.parse as urlparse
@@ -86,7 +87,6 @@ from ai_service import (
     generate_skill_gaps_study,
     generate_interview_questions,
     evaluate_interview_answer,
-    get_api_key,
     generar_sugerencia_curso,
     rewrite_resume_bullet,
     parse_job_details_with_ai
@@ -94,6 +94,14 @@ from ai_service import (
 
 # Fase 5.6c: Generador de PDF ATS-Friendly
 from pdf_generator import generate_resume_pdf
+
+
+from ai_client import get_ai_api_key
+
+# ------------------------------------------------------------------------------
+# SERVICIO DE IA: RESOLUCIÓN SEGURA DE CLAVE DE API DEL SERVIDOR
+# ------------------------------------------------------------------------------
+get_server_ai_api_key = get_ai_api_key
 
 # ------------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA
@@ -699,6 +707,11 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
 
     # Generación inicial con IA si aún no existen en la sesión
     if not c_session.get("questions") or c_session.get("study_guide") is None:
+        api_key_servidor = get_server_ai_api_key("gemini")
+        if not api_key_servidor:
+            st.warning("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde." if curr_lang == "es" else "⚠️ AI service temporarily unavailable. Please try again later.")
+            return
+
         spinner_msg = "🧠 Generando plan de entrenamiento, análisis de brechas y preguntas de entrevista con Gemini..." if curr_lang == "es" else "🧠 Generating tailored interview questions, study guide and practice plan with Gemini..."
         with st.spinner(spinner_msg):
             app_skills = get_skills_by_application(app_actual["id"])
@@ -825,6 +838,8 @@ def render_interview_coach(app_actual: dict, show_close_button: bool = True):
                     if not resp_usuario.strip():
                         warn_empty = "⚠️ Por favor escribe tu respuesta antes de enviarla." if st.session_state.get("lang") == "es" else "⚠️ Please write your answer before submitting."
                         st.warning(warn_empty)
+                    elif not get_server_ai_api_key("gemini"):
+                        st.error("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde." if curr_lang == "es" else "⚠️ AI service temporarily unavailable. Please try again later.")
                     else:
                         eval_spinner_txt = "🧠 Evaluando tu respuesta con Gemini..." if st.session_state.get("lang") == "es" else "🧠 Evaluating your answer with Gemini..."
                         with st.spinner(eval_spinner_txt):
@@ -1268,22 +1283,10 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
             with st.expander(t("profile_preview_expander")):
                 st.text_area(t("profile_preview_content"), value=texto_cv, height=200, disabled=True)
 
-            # Verificación de API Key
-            api_key_activa = get_api_key()
-            if not api_key_activa:
-                st.warning(t("profile_no_api_key_warn"))
-                key_input = st.text_input(t("profile_api_key_input"), type="password")
-                if key_input:
-                    api_key_activa = key_input.strip()
-                    os.environ["GEMINI_API_KEY"] = api_key_activa
-                    # Guardamos automáticamente en .env para que persista
-                    try:
-                        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-                        with open(env_file, "w", encoding="utf-8") as f_env:
-                            f_env.write(f"GEMINI_API_KEY={api_key_activa}\n")
-                        st.info(t("profile_key_saved_env"))
-                    except Exception:
-                        pass
+            # Verificación de API Key exclusiva del servidor (Regla de seguridad)
+            api_key_servidor = get_server_ai_api_key("gemini")
+            if not api_key_servidor:
+                st.warning("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde." if st.session_state.get("lang") == "es" else "⚠️ AI service temporarily unavailable. Please try again later.")
 
             detected_lang_profile = detect_resume_language(texto_cv)
             if detected_lang_profile == "en":
@@ -1298,7 +1301,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                 btn_analizar_es = st.button(
                     lbl_es,
                     type="primary" if is_es else "secondary",
-                    disabled=not bool(api_key_activa),
+                    disabled=not bool(api_key_servidor),
                     key="btn_analizar_cv_prof_es",
                     use_container_width=True
                 )
@@ -1308,7 +1311,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
                 btn_analizar_en = st.button(
                     lbl_en,
                     type="primary" if is_en else "secondary",
-                    disabled=not bool(api_key_activa),
+                    disabled=not bool(api_key_servidor),
                     key="btn_analizar_cv_prof_en",
                     use_container_width=True
                 )
@@ -1316,7 +1319,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
             if btn_analizar_es:
                 with st.spinner("🤖 Analizando y extrayendo perfil en Español con IA..."):
                     try:
-                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa, target_language="es")
+                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_servidor, target_language="es")
                         st.session_state["pending_resume_review"] = resultado
                         st.rerun()
                     except Exception as err:
@@ -1325,7 +1328,7 @@ elif menu_opcion in ("profile", "👤 My Profile", "👤 Mi Perfil"):
             if btn_analizar_en:
                 with st.spinner("🤖 Analyzing and extracting profile in English with AI..."):
                     try:
-                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_activa, target_language="en")
+                        resultado = extract_skills_and_profile_from_resume(texto_cv, api_key=api_key_servidor, target_language="en")
                         st.session_state["pending_resume_review"] = resultado
                         st.rerun()
                     except Exception as err:
@@ -1631,16 +1634,10 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
     else:
         st.info(t("analyzer_active_profile_info", count=len(user_skills)))
 
-    # 2. Verificación de API Key
-    api_key_env = get_api_key()
-    api_key_usuario = None
-    if not api_key_env:
-        with st.expander(t("analyzer_api_expander"), expanded=True):
-            api_key_usuario = st.text_input(
-                t("analyzer_api_key_label"),
-                type="password",
-                help=t("analyzer_api_key_help")
-            )
+    # 2. Verificación de API Key exclusiva del servidor (Regla de seguridad)
+    api_key_servidor = get_server_ai_api_key("gemini")
+    if not api_key_servidor:
+        st.warning("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde." if st.session_state.get("lang") == "es" else "⚠️ AI service temporarily unavailable. Please try again later.")
 
     # 3. Ingreso de Datos (Selección desde aplicaciones existentes o manual)
     st.markdown(f"### {t('analyzer_section_input')}")
@@ -1779,7 +1776,7 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
     # Botones de acción
     col_act1, col_act2 = st.columns([3, 1])
     with col_act1:
-        btn_analizar_vacante = st.button(t("analyzer_btn_analyze"), type="primary", use_container_width=True)
+        btn_analizar_vacante = st.button(t("analyzer_btn_analyze"), type="primary", use_container_width=True, disabled=not bool(api_key_servidor))
     with col_act2:
         if st.button(t("analyzer_btn_clear"), use_container_width=True):
             st.session_state.pop("job_analysis_result", None)
@@ -1793,26 +1790,24 @@ elif menu_opcion in ("analyzer", "🤖 AI Job Analyzer"):
     if btn_analizar_vacante:
         if not job_text_val.strip():
             st.error(t("analyzer_err_empty_input"))
+        elif not api_key_servidor:
+            st.error("⚠️ Servicio de IA no disponible temporalmente. Por favor, intenta más tarde." if st.session_state.get("lang") == "es" else "⚠️ AI service temporarily unavailable. Please try again later.")
         else:
-            api_key_activa = api_key_usuario or api_key_env
-            if not api_key_activa:
-                st.error(t("analyzer_err_no_api_key"))
-            else:
-                with st.spinner(t("analyzer_spinner_evaluating")):
-                    try:
-                        resultado_analisis = analyze_job_description(
-                            job_text=job_text_val.strip(),
-                            user_skills=user_skills,
-                            api_key=api_key_activa
-                        )
-                        st.session_state["job_analysis_result"] = resultado_analisis
-                        st.session_state["job_text_input"] = job_text_val
-                        if url_para_analizar.strip():
-                            st.session_state["job_url_input"] = url_para_analizar.strip()
-                        st.success(t("analyzer_success_analysis"))
-                        st.rerun()
-                    except Exception as err:
-                        st.error(t("analyzer_error_during_analysis", error=err))
+            with st.spinner(t("analyzer_spinner_evaluating")):
+                try:
+                    resultado_analisis = analyze_job_description(
+                        job_text=job_text_val.strip(),
+                        user_skills=user_skills,
+                        api_key=api_key_servidor
+                    )
+                    st.session_state["job_analysis_result"] = resultado_analisis
+                    st.session_state["job_text_input"] = job_text_val
+                    if url_para_analizar.strip():
+                        st.session_state["job_url_input"] = url_para_analizar.strip()
+                    st.success(t("analyzer_success_analysis"))
+                    st.rerun()
+                except Exception as err:
+                    st.error(t("analyzer_error_during_analysis", error=err))
 
     # 4. Visualización del Match y Resultados
     if "job_analysis_result" in st.session_state:
@@ -2587,5 +2582,8 @@ elif menu_opcion in ("coach", "🎯 Prepare me for this job"):
 # PÁGINA: CV IMPROVER (Optimización de Bullets y Rediseño Visual con IA)
 # ==============================================================================
 elif menu_opcion in ("cv_improver", "✨ Mejorar CV con IA", "✨ CV Improver (AI)"):
+    # Limpieza de claves en session_state (Regla de seguridad: clave única del servidor)
+    st.session_state.pop("cv_improver_gemini_key", None)
+    st.session_state.pop("cv_improver_anthropic_key", None)
     from cv_improver.ui import render_cv_improver_page
     render_cv_improver_page()

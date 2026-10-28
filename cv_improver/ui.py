@@ -476,8 +476,13 @@ def render_cv_improver_page():
         # PESTAÑA 1: GALERÍA DE PLANTILLAS LLAMATIVAS CON MINI-MOCKUPS
         # ======================================================================
         with tab_plantillas:
-            st.markdown("#### 🌟 Elige una Plantilla de Alto Impacto")
-            st.caption("Cada plantilla acomoda la información de forma diferente, con diseños modernos, limpios, espaciados y optimizados:")
+            active_lang = st.session_state.get("cv_improver_language", "es")
+            st.markdown("#### 🌟 Elige una Plantilla de Alto Impacto según tu Especialidad" if active_lang == "es" else "#### 🌟 Choose a High-Impact Template for Your Specialty")
+            st.caption(
+                "Cada diseño está optimizado visual y estructuralmente para destacar tu perfil según tu área profesional (ej. Negociación, Informática, Contabilidad y Finanzas, o Startups):"
+                if active_lang == "es" else
+                "Each layout is visually and structurally optimized to emphasize your profile based on your field (e.g., Negotiation, IT, Accounting & Finance, or Startups):"
+            )
 
             current_template = st.session_state.get("selected_cv_template", "moderna")
 
@@ -507,9 +512,11 @@ def render_cv_improver_page():
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.markdown("**🌟 Neo-Ejecutiva**")
-                    st.caption("Sidebar oscura de contraste, monograma y timeline limpia.")
-                    if st.button("Elegir Neo-Ejecutiva", key="btn_pick_mod", use_container_width=True, type="primary" if current_template == "moderna" else "secondary"):
+                    st.markdown("**🌟 Neo-Ejecutiva**" if active_lang == "es" else "**🌟 Neo-Executive**")
+                    st.markdown(":blue-background[💼 **Negociación y Liderazgo**]" if active_lang == "es" else ":blue-background[💼 **Negotiation & Leadership**]")
+                    st.caption("🎯 **Ideal para:** Negociación, Gerencia, Dirección ejecutiva y Ventas.\n\n*Sidebar de contraste, monograma y timeline ejecutiva.*" if active_lang == "es" else "🎯 **Best for:** Negotiation, Management, Executive Leadership & Sales.\n\n*Dark sidebar contrast, monogram & clean timeline.*")
+                    btn_lbl_mod = "Elegir Neo-Ejecutiva" if active_lang == "es" else "Select Neo-Executive"
+                    if st.button(btn_lbl_mod, key="btn_pick_mod", use_container_width=True, type="primary" if current_template == "moderna" else "secondary"):
                         st.session_state["selected_cv_template"] = "moderna"
                         st.rerun()
 
@@ -539,8 +546,10 @@ def render_cv_improver_page():
                     </div>
                     """, unsafe_allow_html=True)
                     st.markdown("**💎 Zafiro Tech**")
-                    st.caption("Hero banner superior, 2 columnas y tarjetas Bento.")
-                    if st.button("Elegir Zafiro", key="btn_pick_zaf", use_container_width=True, type="primary" if current_template == "zafiro" else "secondary"):
+                    st.markdown(":violet-background[💻 **Informática y Software**]" if active_lang == "es" else ":violet-background[💻 **IT & Software Dev**]")
+                    st.caption("🎯 **Ideal para:** Informática, Programación, DevOps, Cloud y Ciberseguridad.\n\n*Hero banner superior, 2 columnas y cuadrícula Bento tech.*" if active_lang == "es" else "🎯 **Best for:** IT, Software Dev, Cloud, DevOps & Cybersecurity.\n\n*Top hero banner, 2 columns & tech Bento grid.*")
+                    btn_lbl_zaf = "Elegir Zafiro" if active_lang == "es" else "Select Sapphire"
+                    if st.button(btn_lbl_zaf, key="btn_pick_zaf", use_container_width=True, type="primary" if current_template == "zafiro" else "secondary"):
                         st.session_state["selected_cv_template"] = "zafiro"
                         st.rerun()
 
@@ -570,9 +579,11 @@ def render_cv_improver_page():
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.markdown("**🚀 Vanguardia**")
-                    st.caption("Acento superior, timeline de experiencias y etiquetas modernas.")
-                    if st.button("Elegir Vanguardia", key="btn_pick_vg", use_container_width=True, type="primary" if current_template == "vanguardia" else "secondary"):
+                    st.markdown("**🚀 Vanguardia**" if active_lang == "es" else "**🚀 Vanguard**")
+                    st.markdown(":orange-background[🚀 **Startups e Innovación**]" if active_lang == "es" else ":orange-background[🚀 **Startups & Innovation**]")
+                    st.caption("🎯 **Ideal para:** Startups, Marketing Digital, Producto, Diseño y Creatividad.\n\n*Acento superior dinámico, timeline moderna y badges destacados.*" if active_lang == "es" else "🎯 **Best for:** Startups, Digital Marketing, Product, Design & Creative roles.\n\n*Dynamic top accent, modern timeline & featured badges.*")
+                    btn_lbl_vg = "Elegir Vanguardia" if active_lang == "es" else "Select Vanguard"
+                    if st.button(btn_lbl_vg, key="btn_pick_vg", use_container_width=True, type="primary" if current_template == "vanguardia" else "secondary"):
                         st.session_state["selected_cv_template"] = "vanguardia"
                         st.rerun()
 
@@ -594,9 +605,11 @@ def render_cv_improver_page():
                       <div style="height: 2px; background: #CBD5E1; width: 75%;"></div>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.markdown("**🌿 Nórdica**")
-                    st.caption("Mucho aire blanco, tipografía ligera y líneas ultra finas.")
-                    if st.button("Elegir Nórdica", key="btn_pick_nord", use_container_width=True, type="primary" if current_template == "minimalista" else "secondary"):
+                    st.markdown("**🌿 Nórdica**" if active_lang == "es" else "**🌿 Nordic**")
+                    st.markdown(":green-background[📊 **Contabilidad y Finanzas**]" if active_lang == "es" else ":green-background[📊 **Accounting & Finance**]")
+                    st.caption("🎯 **Ideal para:** Contabilidad, Finanzas, Legal, Recursos Humanos y Operaciones.\n\n*Mucho aire blanco, tipografía ligera y líneas ultra finas.*" if active_lang == "es" else "🎯 **Best for:** Accounting, Finance, Legal, HR & Operations.\n\n*Generous whitespace, light typography & ultra-fine lines.*")
+                    btn_lbl_nord = "Elegir Nórdica" if active_lang == "es" else "Select Nordic"
+                    if st.button(btn_lbl_nord, key="btn_pick_nord", use_container_width=True, type="primary" if current_template == "minimalista" else "secondary"):
                         st.session_state["selected_cv_template"] = "minimalista"
                         st.rerun()
 
@@ -618,9 +631,11 @@ def render_cv_improver_page():
                       <div style="height: 2px; background: #CBD5E1; width: 80%; text-align: left;"></div>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.markdown("**🏛️ Clásica ATS**")
-                    st.caption("1 columna tradicional suiza, 100% compatible ATS estricto.")
-                    if st.button("Elegir Clásica", key="btn_pick_clas", use_container_width=True, type="primary" if current_template == "clasica" else "secondary"):
+                    st.markdown("**🏛️ Clásica ATS**" if active_lang == "es" else "**🏛️ Classic ATS**")
+                    st.markdown(":gray-background[🏛️ **Banca y Corporativo**]" if active_lang == "es" else ":gray-background[🏛️ **Banking & Corporate**]")
+                    st.caption("🎯 **Ideal para:** Banca Tradicional, Finanzas Corporativas, Auditoría, Gobierno y ATS.\n\n*1 columna tradicional suiza, 100% compatible ATS estricto.*" if active_lang == "es" else "🎯 **Best for:** Traditional Banking, Corporate Finance, Auditing, Government & Strict ATS.\n\n*1 traditional Swiss column, 100% strict ATS friendly.*")
+                    btn_lbl_clas = "Elegir Clásica" if active_lang == "es" else "Select Classic"
+                    if st.button(btn_lbl_clas, key="btn_pick_clas", use_container_width=True, type="primary" if current_template == "clasica" else "secondary"):
                         st.session_state["selected_cv_template"] = "clasica"
                         st.rerun()
 
@@ -691,7 +706,15 @@ def render_cv_improver_page():
             )
 
             # VISTA PREVIA EN VIVO
-            st.markdown(f"##### 👁️ Previsualización en Vivo: *Plantilla {current_template.capitalize()}*")
+            template_meta = {
+                "moderna": ("Neo-Ejecutiva" if active_lang == "es" else "Neo-Executive", "💼 Negociación y Liderazgo" if active_lang == "es" else "💼 Negotiation & Leadership"),
+                "zafiro": ("Zafiro Tech", "💻 Informática y Software" if active_lang == "es" else "💻 IT & Software Dev"),
+                "vanguardia": ("Vanguardia" if active_lang == "es" else "Vanguard", "🚀 Startups e Innovación" if active_lang == "es" else "🚀 Startups & Innovation"),
+                "minimalista": ("Nórdica" if active_lang == "es" else "Nordic", "📊 Contabilidad y Finanzas" if active_lang == "es" else "📊 Accounting & Finance"),
+                "clasica": ("Clásica ATS" if active_lang == "es" else "Classic ATS", "🏛️ Banca y Corporativo" if active_lang == "es" else "🏛️ Banking & Corporate")
+            }
+            meta_name, meta_target = template_meta.get(current_template, (current_template.capitalize(), ""))
+            st.markdown(f"##### 👁️ Previsualización en Vivo: *Plantilla {meta_name}* · `{meta_target}`" if active_lang == "es" else f"##### 👁️ Live Preview: *Template {meta_name}* · `{meta_target}`")
             components.html(html_preview, height=780, scrolling=True)
 
             # BOTÓN PRINCIPAL DE DESCARGA EN PDF CON DISEÑO IDÉNTICO
