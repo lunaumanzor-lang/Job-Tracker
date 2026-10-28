@@ -8,12 +8,15 @@ import re
 import json
 import base64
 import time
+import logging
 from datetime import datetime, date
 import streamlit as st
 import streamlit.components.v1 as components
 import urllib.parse as urlparse
 import pandas as pd
 from supabase import create_client, Client
+
+logger = logging.getLogger(__name__)
 
 # Importamos las funciones de la base de datos de la Fase 2, 4, 5.1 y 7
 from database import (
@@ -157,8 +160,26 @@ if "supabase_client" not in st.session_state:
     st.session_state.supabase_client = create_client(url, key)
 supabase: Client = st.session_state.supabase_client
 
-# Limpiar automáticamente sesiones expiradas en SQLite
-cleanup_expired_sessions()
+# ------------------------------------------------------------------------------
+# GESTIÓN DE LIMPIEZA PERIÓDICA DE SESIONES (Nivel Proceso)
+# ------------------------------------------------------------------------------
+_LAST_SESSION_CLEANUP_TS: float = 0.0
+
+def maybe_cleanup_expired_sessions(cooldown_seconds: int = 3600) -> None:
+    """
+    Ejecuta cleanup_expired_sessions únicamente cuando un usuario inicia sesión
+    correctamente y como máximo una vez por hora (3600s) por proceso.
+    Si falla, captura el error, lo registra y no interrumpe la carga de la página.
+    """
+    global _LAST_SESSION_CLEANUP_TS
+    now = time.time()
+    if (now - _LAST_SESSION_CLEANUP_TS) < cooldown_seconds:
+        return
+    try:
+        cleanup_expired_sessions()
+        _LAST_SESSION_CLEANUP_TS = now
+    except Exception as exc:
+        logger.warning(f"Error en limpieza periódica de sesiones expiradas: {exc}")
 
 # 2. Inicializar el usuario en el estado de la sesión si no existe
 if 'user' not in st.session_state:
@@ -167,7 +188,7 @@ if 'user' not in st.session_state:
 def establish_authenticated_session(user, session, email_fallback: str = "", hours: int = 4):
     """
     Registra al usuario autenticado en st.session_state y persiste un identificador
-    de sesión en SQLite (auth_sessions) y en la URL (st.query_params["session_id"])
+    de sesión en auth_sessions (Supabase) y en la URL (st.query_params["session_id"])
     válido durante 4 horas. Así sobrevive a los refrescos del navegador (F5).
     """
     st.session_state.user = user
@@ -202,6 +223,9 @@ def establish_authenticated_session(user, session, email_fallback: str = "", hou
         st.query_params["session_id"] = new_sid
         st.session_state.pop("session_expired_notice", None)
 
+        # Ejecutar limpieza de sesiones expiradas solo tras login exitoso (máx. 1 vez/hora por proceso)
+        maybe_cleanup_expired_sessions()
+
 # 2.1 AUTO-LOGIN: Si el usuario refresca la página (F5) o regresa dentro de las 4 horas
 persisted_sid = st.query_params.get("session_id")
 if persisted_sid and st.session_state.user is None:
@@ -228,6 +252,8 @@ if persisted_sid and st.session_state.user is None:
                 except Exception:
                     pass
                 st.session_state.pop("session_expired_notice", None)
+                # Ejecutar limpieza de sesiones expiradas tras restaurar sesión exitosamente
+                maybe_cleanup_expired_sessions()
             else:
                 delete_auth_session(persisted_sid)
                 st.query_params.pop("session_id", None)
