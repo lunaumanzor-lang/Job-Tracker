@@ -77,6 +77,60 @@ def _clean_bullet_fallback(bullet_text: str, is_en: bool = False) -> str:
     return cleaned
 
 
+SUPPORT_VERBS = {
+    "ayudé", "ayude",
+    "colaboré", "colabore",
+    "participé", "participe",
+    "apoyé", "apoye",
+    "asistí", "asisti",
+    "helped",
+    "assisted",
+    "collaborated",
+    "participated",
+    "supported",
+}
+
+LEADERSHIP_AUTHORSHIP_VERBS = {
+    "implementé", "implemente",
+    "lideré", "lidere",
+    "diseñé", "disene",
+    "desarrollé", "desarrolle",
+    "creé", "cree",
+    "dirigí", "dirigi",
+    "implemented",
+    "led",
+    "designed",
+    "developed",
+    "created",
+    "directed",
+}
+
+
+def _extract_first_verb(text: str) -> str:
+    """Extrae la primera palabra o verbo en minúsculas ignorando viñetas y puntuación."""
+    cleaned = text.strip().lstrip("-*•·\t ").strip()
+    tokens = cleaned.split()
+    if not tokens:
+        return ""
+    return tokens[0].lower().strip(".,:;¿?¡!'\"()[]{}")
+
+
+def _get_deterministic_bullet_fallback(bullet_text: str, is_en: bool = False) -> BulletItem:
+    """Genera el respaldo determinista para una viñeta preservando el nivel colaborativo sin inventar."""
+    cleaned = _clean_bullet_fallback(bullet_text, is_en=is_en)
+    has_numbers = bool(re.search(r"\d+%?", bullet_text))
+    if is_en:
+        suggestion = None if has_numbers else "Can you quantify the result with a metric, percentage, or measurable outcome?"
+    else:
+        suggestion = None if has_numbers else "¿Puedes indicar el resultado obtenido o cuantificarlo con alguna métrica o porcentaje?"
+
+    return BulletItem(
+        original=bullet_text,
+        improved=cleaned,
+        suggestion=suggestion
+    )
+
+
 BULLET_ENHANCEMENT_SYSTEM_PROMPT_ES = """Eres un consultor de carrera y redactor experto en currículums de alto impacto (ATS).
 Tu misión es optimizar la redacción de cada viñeta o responsabilidad laboral haciéndola concisa, profesional y de alto impacto, respetando estrictamente la veracidad del contenido original.
 
@@ -241,11 +295,29 @@ Genera el JSON con el bullet mejorado en español y la sugerencia de métrica si
         suggestion = data.get("suggestion")
         action_verb = (data.get("action_verb") or "").lower().strip()
 
+        # Validación posterior: si el original empieza con un verbo de apoyo (ayudé, colaboré, participé, apoyé, asistí)
+        # y la viñeta mejorada empieza con un verbo de autoría o liderazgo (implementé, lideré, diseñé, desarrollé, creé, dirigí),
+        # descarta esa salida y usa el respaldo determinista para esa viñeta.
+        orig_first_verb = _extract_first_verb(bullet_text)
+        improved_first_verb = _extract_first_verb(improved_text)
+
+        if orig_first_verb in SUPPORT_VERBS:
+            if improved_first_verb in LEADERSHIP_AUTHORSHIP_VERBS or action_verb in LEADERSHIP_AUTHORSHIP_VERBS:
+                logger.warning(
+                    f"Salida del modelo descartada para viñeta '{bullet_text}': "
+                    f"subió el nivel de participación a '{improved_text}'. Aplicando respaldo determinista."
+                )
+                fallback_item = _get_deterministic_bullet_fallback(bullet_text, is_en=is_en)
+                fb_verb = _extract_first_verb(fallback_item.improved)
+                if fb_verb:
+                    used_verbs.add(fb_verb)
+                return fallback_item
+
         # Registrar el verbo usado para evitar repetición en las siguientes viñetas de la misma experiencia
         if action_verb:
             used_verbs.add(action_verb)
         else:
-            first_word = improved_text.split()[0].lower().strip(".,:;") if improved_text.split() else ""
+            first_word = _extract_first_verb(improved_text)
             if first_word:
                 used_verbs.add(first_word)
 
@@ -258,19 +330,7 @@ Genera el JSON con el bullet mejorado en español y la sugerencia de métrica si
     except Exception as e:
         logger.error(f"Error al mejorar viñeta con LLM: {e}", exc_info=True)
         # Fallback determinista seguro sin inventar nada y preservando nivel de participación
-        cleaned = _clean_bullet_fallback(bullet_text, is_en=is_en)
-
-        has_numbers = bool(re.search(r"\d+%?", bullet_text))
-        if is_en:
-            suggestion = None if has_numbers else "Can you quantify the result with a metric, percentage, or measurable outcome?"
-        else:
-            suggestion = None if has_numbers else "¿Puedes indicar el resultado obtenido o cuantificarlo con alguna métrica o porcentaje?"
-
-        return BulletItem(
-            original=bullet_text,
-            improved=cleaned,
-            suggestion=suggestion
-        )
+        return _get_deterministic_bullet_fallback(bullet_text, is_en=is_en)
 
 
 def enhance_summary(
@@ -337,10 +397,7 @@ def enhance_resume_content(
         for b in exp.bullets:
             if deadline is not None and time.monotonic() >= deadline:
                 logger.warning(f"Tope de tiempo alcanzado en {exp.company}; aplicando fallback determinista para viñetas.")
-                cleaned = _clean_bullet_fallback(b.original, is_en=is_en)
-                has_numbers = bool(re.search(r"\d+%?", b.original))
-                sug = None if has_numbers else ("Can you quantify the result with a metric, percentage, or measurable outcome?" if is_en else "¿Puedes indicar el resultado obtenido o cuantificarlo con alguna métrica o porcentaje?")
-                new_bullets.append(BulletItem(original=b.original, improved=cleaned, suggestion=sug))
+                new_bullets.append(_get_deterministic_bullet_fallback(b.original, is_en=is_en))
             else:
                 improved_b = improve_bullet_point(
                     bullet_text=b.original,

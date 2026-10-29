@@ -233,3 +233,46 @@ def test_fallback_starting_with_ayude_en_preserves_collaboration_level():
     assert "lideré" not in improved_lower
     assert "diseñé" not in improved_lower
 
+
+def test_post_validation_discards_model_output_elevating_participation_level():
+    """
+    Verifica la validación posterior: si el texto original empieza con un verbo de apoyo
+    ('ayudé', 'colaboré', 'participé', 'apoyé', 'asistí') y la salida simulada del modelo
+    sube el nivel a autoría o liderazgo ('implementé', 'lideré', 'diseñé', 'desarrollé', 'creé', 'dirigí'),
+    dicha salida se descarta y se aplica el respaldo determinista para esa viñeta.
+    """
+    class ElevatingMockProvider(LLMProvider):
+        def __init__(self, elevated_verb: str):
+            self.elevated_verb = elevated_verb
+
+        def generate_text(self, prompt, system_prompt=None, temperature=0.2, max_tokens=4096, **kwargs):
+            return json.dumps({
+                "improved": f"{self.elevated_verb.capitalize()} la arquitectura completa de microservicios en Kubernetes.",
+                "action_verb": self.elevated_verb,
+                "suggestion": "¿Tienes métricas del proyecto?"
+            })
+
+    # Probar con varios verbos de autoría/liderazgo
+    for forbidden_verb in ["implementé", "lideré", "diseñé", "desarrollé", "creé", "dirigí"]:
+        provider = ElevatingMockProvider(forbidden_verb)
+        used_verbs = set()
+        bullet = "Ayudé en la migración a contenedores Docker para mejorar los despliegues."
+
+        item = improve_bullet_point(
+            bullet_text=bullet,
+            company="Tech Corp",
+            position="Backend Dev",
+            used_verbs=used_verbs,
+            provider=provider
+        )
+
+        improved_lower = item.improved.lower()
+        # La salida del modelo que subió el nivel debió ser descartada
+        assert not improved_lower.startswith(forbidden_verb)
+        assert forbidden_verb not in used_verbs
+
+        # Debe haberse aplicado el respaldo determinista (conserva colaboración)
+        assert improved_lower.startswith("colaboré en")
+        assert "migración a contenedores docker" in improved_lower
+
+
