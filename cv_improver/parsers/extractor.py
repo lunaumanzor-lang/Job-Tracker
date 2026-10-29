@@ -4,6 +4,7 @@ Orquestador de extracción de texto y conversión a ResumeSchema validado con LL
 
 import os
 import re
+import time
 import logging
 from typing import Optional, Dict, Any
 from .base import validate_uploaded_file, UnsupportedFileTypeError
@@ -21,6 +22,7 @@ from ..schema import (
     CertificationItem
 )
 from ..enhancer.provider_base import LLMProvider
+from ai_client import AITimeBudgetExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +392,9 @@ def parse_resume_to_schema(
         provider, _ = get_active_llm_provider()
 
     if provider is not None:
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning("Tope de tiempo (deadline monotónico) alcanzado antes de parsear CV con LLM.")
+            raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la extracción de CV ha sido superado.")
         try:
             prompt = user_prompt_tpl.format(raw_text=raw_text)
             json_data = provider.generate_json(
@@ -414,6 +419,9 @@ def parse_resume_to_schema(
                         resume.skills = heuristic_fallback.skills
 
             return resume
+        except AITimeBudgetExceeded:
+            logger.warning("Tope de tiempo alcanzado en parse_resume_to_schema con LLM. Propagando AITimeBudgetExceeded...")
+            raise
         except Exception as e:
             logger.error(f"Error procesando CV con LLMProvider: {e}", exc_info=True)
             logger.info("Recurriendo al parser heurístico de contingencia...")

@@ -245,3 +245,17 @@ def test_parse_resume_to_schema_heuristic_fallback(txt_bytes):
     assert "Juan Perez" in parsed.contact.name
     assert parsed.contact.email == "juan.perez@example.com"
     assert len(parsed.experience) > 0
+
+
+def test_parse_resume_to_schema_aborts_on_monotonic_deadline():
+    """Verifica que si el reloj monotónico supera el deadline, parse_resume_to_schema eleva AITimeBudgetExceeded."""
+    from unittest.mock import patch
+    from ai_client import AITimeBudgetExceeded
+
+    mock_provider = MockLLMProvider({})
+    clock = [200.0]
+
+    with patch("time.monotonic", side_effect=lambda: clock[0]):
+        with pytest.raises(AITimeBudgetExceeded):
+            parse_resume_to_schema("Texto crudo del CV...", provider=mock_provider, deadline=150.0)
+

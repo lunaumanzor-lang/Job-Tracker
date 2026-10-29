@@ -183,6 +183,46 @@ def test_enhance_resume_content_deadline_fallback():
     assert res.summary_improved is None  # Resumen conservó el original sin alterar
 
 
+def test_enhance_resume_content_deadline_fallback_with_simulated_monotonic_clock():
+    """Verifica que simular el avance de time.monotonic() por encima del deadline activa el fallback sin llamar a la IA."""
+    from unittest.mock import patch
+    call_count = {"count": 0}
+
+    class CountingProvider(LLMProvider):
+        def generate_text(self, prompt, system_prompt=None, temperature=0.2, max_tokens=4096, **kwargs):
+            call_count["count"] += 1
+            return "{}"
+
+    provider = CountingProvider()
+    resume = ResumeSchema(
+        contact=ContactInfo(name="Carlos Test", email="carlos@example.com"),
+        summary="Resumen de prueba",
+        experience=[
+            ExperienceItem(
+                company="Empresa C",
+                position="Developer",
+                bullets=[
+                    BulletItem(original="Responsable de monitorear servidores")
+                ]
+            )
+        ]
+    )
+
+    fake_clock = [100.0]
+
+    def fake_monotonic():
+        return fake_clock[0]
+
+    with patch("time.monotonic", side_effect=fake_monotonic):
+        # Reloj avanza a 110.0 superando el deadline fijado en 105.0
+        fake_clock[0] = 110.0
+        res = enhance_resume_content(resume, provider, deadline=105.0)
+
+    assert call_count["count"] == 0
+    assert not res.experience[0].bullets[0].improved.lower().startswith("responsable de")
+    assert res.summary_improved is None
+
+
 def test_improve_bullet_starting_with_ayude_en_preserves_collaboration_level():
     """
     Verifica que una viñeta que empiece con 'Ayudé en' conserve el nivel de participación
@@ -274,5 +314,34 @@ def test_post_validation_discards_model_output_elevating_participation_level():
         # Debe haberse aplicado el respaldo determinista (conserva colaboración)
         assert improved_lower.startswith("colaboré en")
         assert "migración a contenedores docker" in improved_lower
+
+
+def test_process_and_enhance_cv_catches_ai_time_budget_exceeded():
+    """
+    Verifica que process_and_enhance_cv captura AITimeBudgetExceeded,
+    activa el indicador de timed_out y carga el CV estructurado sin bloquear.
+    """
+    from unittest.mock import patch
+    from ai_client import AITimeBudgetExceeded
+    from cv_improver.ui import process_and_enhance_cv
+
+    fake_session = {}
+
+    class TimeoutProvider(LLMProvider):
+        def generate_text(self, *args, **kwargs):
+            raise AITimeBudgetExceeded("Presupuesto agotado")
+
+    with patch("streamlit.session_state", fake_session), \
+         patch("streamlit.rerun", return_value=None), \
+         patch("cv_improver.ui.get_active_llm_provider", return_value=(TimeoutProvider(), "Gemini")), \
+         patch("cv_improver.ui.persist_active_cv_draft", return_value=None), \
+         patch("cv_improver.ui.st.toast", return_value=None):
+        raw_text = "Juan Perez\njuan@example.com\nExperiencia:\nSoftware Dev en ABC (2020-2022)\n- Desarrollé software"
+        process_and_enhance_cv(raw_text)
+
+        assert "cv_improver_notice" in fake_session
+        assert "90 s" in fake_session["cv_improver_notice"]
+        assert fake_session["cv_improver_active_schema"] is not None
+
 
 

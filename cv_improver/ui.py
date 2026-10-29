@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Cargar variables de entorno de .env (para GEMINI_API_KEY)
 load_dotenv()
 
+from ai_client import AITimeBudgetExceeded
 from .parsers import (
     validate_uploaded_file,
     extract_text_from_file,
@@ -165,6 +166,12 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
                 language=resolved_lang,
                 deadline=deadline
             )
+        except AITimeBudgetExceeded as budget_err:
+            logger.warning(f"Presupuesto de tiempo agotado durante parseo estructural de CV: {budget_err}")
+            from .parsers.extractor import _fallback_heuristic_parse
+            parsed_resume = _fallback_heuristic_parse(raw_text, language=resolved_lang)
+            parsed_resume.raw_text = raw_text
+            timed_out = True
         except Exception as parse_err:
             logger.error(f"Error estructurando CV con LLM: {parse_err}")
             from .parsers.extractor import _fallback_heuristic_parse
@@ -176,7 +183,7 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
         elapsed = time.monotonic() - start_time
         if elapsed >= max_duration:
             timed_out = True
-        elif provider and not ai_failed:
+        elif provider and not ai_failed and not timed_out:
             # 2. Mejora de viñetas y resumen con límite de tiempo
             try:
                 enhanced_resume = enhance_resume_content(
@@ -187,6 +194,10 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
                 )
                 if (time.monotonic() - start_time) >= max_duration:
                     timed_out = True
+            except AITimeBudgetExceeded as budget_err:
+                logger.warning(f"Presupuesto de tiempo agotado durante optimización de viñetas: {budget_err}")
+                timed_out = True
+                enhanced_resume = parsed_resume
             except Exception as enhance_err:
                 logger.error(f"Error optimizando contenido con IA: {enhance_err}")
                 ai_failed = True

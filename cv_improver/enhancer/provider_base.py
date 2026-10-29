@@ -22,7 +22,10 @@ class LLMProvider(ABC):
         deadline: Optional[float] = None,
         timeout_per_call: float = 15.0
     ) -> str:
-        """Genera una respuesta de texto libre dado un prompt."""
+        """
+        Genera una respuesta de texto libre dado un prompt.
+        deadline: Marca de tiempo absoluta medida con time.monotonic() para abortar operaciones que excedan el presupuesto.
+        """
         pass
 
     def generate_json(
@@ -37,6 +40,7 @@ class LLMProvider(ABC):
         """
         Envía un prompt solicitando salida estructurada en JSON y retorna el diccionario parseado.
         Limpia automáticamente bloques de código markdown como ```json ... ```.
+        deadline: Marca de tiempo absoluta medida con time.monotonic().
         """
         try:
             raw_output = self.generate_text(
