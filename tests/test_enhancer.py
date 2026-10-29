@@ -23,7 +23,13 @@ class MockEnhancerProvider(LLMProvider):
             })
 
         # Evaluar viñeta
-        if "sin métricas" in prompt.lower() or "encargado de" in prompt.lower():
+        if "ayudé" in prompt.lower() or "colaboré" in prompt.lower() or "participé" in prompt.lower():
+            return json.dumps({
+                "improved": "Colaboré en la migración a contenedores Docker para mejorar los despliegues.",
+                "action_verb": "colaboré",
+                "suggestion": "¿En qué porcentaje mejoraron los tiempos de despliegue o cuántos contenedores se migraron?"
+            })
+        elif "sin métricas" in prompt.lower() or "encargado de" in prompt.lower():
             return json.dumps({
                 "improved": "Diseñé la arquitectura de microservicios usando Python y FastAPI.",
                 "action_verb": "diseñé",
@@ -175,4 +181,55 @@ def test_enhance_resume_content_deadline_fallback():
     assert len(res.experience[0].bullets) == 2
     assert not res.experience[0].bullets[0].improved.lower().startswith("responsable de")
     assert res.summary_improved is None  # Resumen conservó el original sin alterar
+
+
+def test_improve_bullet_starting_with_ayude_en_preserves_collaboration_level():
+    """
+    Verifica que una viñeta que empiece con 'Ayudé en' conserve el nivel de participación
+    (colaborativo) y que la salida simulada no suba el nivel a 'implementé', 'lideré' ni 'diseñé'.
+    """
+    provider = MockEnhancerProvider()
+    used_verbs = set()
+    bullet = "Ayudé en la migración a contenedores Docker para mejorar los despliegues."
+    item = improve_bullet_point(
+        bullet_text=bullet,
+        company="Tech Corp",
+        position="Backend Dev",
+        used_verbs=used_verbs,
+        provider=provider
+    )
+    improved_lower = item.improved.lower()
+    # (1) Conserva el nivel de participación del original: 'ayudé', 'colaboré' o 'participé' nunca pasan a 'implementé', 'lideré' ni 'diseñé'
+    assert any(verb in improved_lower for verb in ["colaboré", "ayudé", "participé", "apoyé", "asistí"])
+    assert "implementé" not in improved_lower
+    assert "lideré" not in improved_lower
+    assert "diseñé" not in improved_lower
+    # (4) Si falta un resultado cuantitativo, la sugerencia lo pide en vez de inventarlo
+    assert item.suggestion is not None
+
+
+def test_fallback_starting_with_ayude_en_preserves_collaboration_level():
+    """
+    Verifica que el fallback determinista ante fallo del LLM también conserve el nivel
+    de participación colaborativo para viñetas que empiezan con 'Ayudé en'.
+    """
+    class FailingProvider(LLMProvider):
+        def generate_text(self, prompt, system_prompt=None, temperature=0.2, max_tokens=4096, **kwargs):
+            raise RuntimeError("Fallo simulado del proveedor")
+
+    failing_provider = FailingProvider()
+    used_verbs = set()
+    bullet = "Ayudé en la migración a contenedores Docker para mejorar los despliegues."
+    item = improve_bullet_point(
+        bullet_text=bullet,
+        company="Tech Corp",
+        position="Backend Dev",
+        used_verbs=used_verbs,
+        provider=failing_provider
+    )
+    improved_lower = item.improved.lower()
+    assert any(verb in improved_lower for verb in ["colaboré", "ayudé", "participé", "apoyé", "asistí"])
+    assert "implementé" not in improved_lower
+    assert "lideré" not in improved_lower
+    assert "diseñé" not in improved_lower
 

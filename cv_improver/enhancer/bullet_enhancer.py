@@ -17,79 +17,172 @@ WEAK_PHRASES = [
     "responsable de",
     "encargado de",
     "encargada de",
-    "ayudé a",
     "trabajé en",
-    "participé en",
     "mi rol era",
     "funciones incluían",
     "responsible for",
     "in charge of",
-    "assisted with",
     "worked on"
 ]
 
+
+def _clean_bullet_fallback(bullet_text: str, is_en: bool = False) -> str:
+    """Fallback determinista para viñetas que limpia frases pasivas y preserva el nivel colaborativo sin inventar."""
+    cleaned = bullet_text.strip()
+    cleaned_lower = cleaned.lower()
+
+    # Conservar el nivel de colaboración: 'ayudé', 'colaboré', 'participé' nunca se pierden ni se escalan
+    if is_en:
+        collab_prefixes = [
+            ("helped with", "Collaborated on"),
+            ("helped to", "Collaborated on"),
+            ("assisted with", "Collaborated on"),
+            ("assisted in", "Collaborated on"),
+            ("collaborated on", "Collaborated on"),
+            ("participated in", "Collaborated on"),
+            ("supported in", "Collaborated on"),
+        ]
+    else:
+        collab_prefixes = [
+            ("ayudé a", "Colaboré en"),
+            ("ayudé en", "Colaboré en"),
+            ("colaboré en", "Colaboré en"),
+            ("colaboré con", "Colaboré con"),
+            ("participé en", "Colaboré en"),
+            ("apoyé en", "Colaboré en"),
+            ("asistí en", "Colaboré en"),
+        ]
+
+    for prefix, replacement in collab_prefixes:
+        if cleaned_lower.startswith(prefix):
+            rest = cleaned[len(prefix):].strip()
+            return f"{replacement} {rest}" if rest else replacement
+
+    passive_phrases = [
+        "responsable de",
+        "encargado de",
+        "encargada de",
+        "trabajé en",
+        "mi rol era",
+        "funciones incluían",
+        "responsible for",
+        "in charge of",
+        "worked on"
+    ]
+    for phrase in passive_phrases:
+        if cleaned_lower.startswith(phrase):
+            cleaned = cleaned[len(phrase):].strip()
+            return cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
+
+    return cleaned
+
+
 BULLET_ENHANCEMENT_SYSTEM_PROMPT_ES = """Eres un consultor de carrera y redactor experto en currículums de alto impacto (ATS).
-Tu misión es transformar cada viñeta o responsabilidad en un logro profesional conciso y convincente.
+Tu misión es optimizar la redacción de cada viñeta o responsabilidad laboral haciéndola concisa, profesional y de alto impacto, respetando estrictamente la veracidad del contenido original.
 
 REGLAS ESTRICTAS DE REDACCIÓN:
-1. ESTRUCTURA: Comienza siempre con un verbo de acción fuerte en tiempo pasado (ej. 'Implementé', 'Diseñé', 'Optimizé', 'Desplegué', 'Lideré', 'Construí').
-2. FÓRMULA: Acción + Contexto + Resultado (máximo 2 líneas, entre 120 y 200 caracteres aprox).
-3. PROHIBICIONES: Elimina absolutamente frases vacías o pasivas como "responsable de", "encargado de", "trabajé en", "participé en", "ayudé a".
-4. SIN REPETICIÓN: NO repitas ninguno de los verbos de acción ya utilizados en la misma experiencia.
-5. IDIOMA: Redacta estrictamente en Español impecable y profesional.
-6. REGLA CRÍTICA ANTI-INVENCIÓN:
-   - NUNCA inventes números, porcentajes, cifras de dinero, nombres de clientes ni logros que no aparezcan en el texto original.
-   - Si la viñeta original NO incluye métricas cuantitativas, mejora la redacción, acción y claridad sin inventar datos, y GENERA una pregunta puntual en el campo "suggestion" preguntándole al usuario qué dato cuantificable puede añadir (ej. '¿En qué porcentaje redujo los tiempos de carga?' o '¿Cuántos miembros del equipo colaboraron?').
-   - Si la viñeta original ya incluye cifras y logros suficientes, el campo "suggestion" debe ser null.
+1. CONSERVAR EL NIVEL DE PARTICIPACIÓN (REGLA FUNDAMENTAL):
+   - Si la viñeta original indica apoyo, colaboración o asistencia ("ayudé", "colaboré", "participé", "apoyé", "asistí"):
+     * NUNCA subas ni exageres el nivel de responsabilidad. “ayudé”, “colaboré” o “participé” NUNCA deben pasar a “implementé”, “lideré”, “diseñé”, “construí” ni “arquitecté”.
+     * Conserva estrictamente el rol colaborativo utilizando verbos de acción colaborativos en pasado (ej. 'Colaboré en', 'Contribuí a', 'Apoyé en', 'Asistí en').
+   - Solo cuando la viñeta original exprese autoría individual directa o liderazgo, utiliza verbos de acción individuales en pasado (ej. 'Implementé', 'Diseñé', 'Optimizé', 'Desplegué', 'Lideré').
+
+2. NO AGREGAR RESULTADOS, BENEFICIOS, TECNOLOGÍAS NI DETALLES INVENTADOS:
+   - NUNCA agregues tecnologías, herramientas, metodologías, clientes ni tareas que no figuren explícitamente en el texto original.
+   - NUNCA inventes resultados, métricas, porcentajes, impactos ni frases genéricas de beneficio (como "para acelerar los despliegues", "mejorando la eficiencia operativa", "garantizando alta disponibilidad" o "estandarizando procesos") si el original no los menciona explícitamente.
+   - Limítate con fidelidad absoluta a lo que el candidato realmente escribió.
+
+3. FÓRMULA DE ESTRUCTURA:
+   - Verbo de acción + Contexto real + Resultado (solo si el resultado ya está presente en el texto original).
+   - Longitud máxima: 1 a 2 líneas (aproximadamente entre 100 y 180 caracteres).
+
+4. SI FALTA UN RESULTADO O MÉTRICA, SOLICÍTALO EN LA SUGERENCIA ATS EN VEZ DE INVENTARLO:
+   - Si la viñeta original NO incluye un resultado medible o métrica cuantitativa:
+     * NO inventes ningún resultado ni consecuencia en el texto de "improved".
+     * Genera una pregunta concreta y puntual en el campo "suggestion" pidiéndole al candidato el resultado o métrica faltante (ej. "¿Qué impacto, métrica o porcentaje de mejora obtuviste con esta tarea?").
+   - Si la viñeta original ya contiene un resultado o métrica cuantitativa suficiente, el campo "suggestion" debe ser null.
+
+5. PROHIBICIONES DE ESTILO:
+   - Elimina frases pasivas o burocráticas como "responsable de", "encargado de", "encargada de", "mi rol era", "funciones incluían".
+
+6. SIN REPETICIÓN: NO repitas ninguno de los verbos de acción ya utilizados en la misma experiencia.
+7. IDIOMA: Redacta estrictamente en Español impecable y profesional.
 
 Devuelve ÚNICAMENTE un objeto JSON con este formato:
 {
   "improved": "Texto del bullet mejorado en español",
   "action_verb": "verbo utilizado en pasado (en minúsculas)",
-  "suggestion": "Pregunta al usuario sobre la métrica faltante o null si ya tenía métricas"
+  "suggestion": "Pregunta al usuario sobre la métrica o resultado faltante, o null si ya tenía resultados suficientes"
 }"""
 
 BULLET_ENHANCEMENT_SYSTEM_PROMPT_EN = """You are an executive career advisor and expert ATS resume writer.
-Your mission is to transform each bullet point or job duty into a concise, compelling, high-impact professional achievement.
+Your mission is to optimize each bullet point or job duty into a concise, professional, high-impact achievement, strictly preserving truthfulness and factual accuracy.
 
 STRICT WRITING RULES:
-1. STRUCTURE: Always begin with a strong, dynamic action verb in the past tense (e.g., 'Engineered', 'Architected', 'Spearheaded', 'Optimized', 'Deployed', 'Implemented', 'Built', 'Led').
-2. FORMULA: Action + Context + Result (maximum 1-2 lines, approx 120-200 characters).
-3. PROHIBITIONS: Completely eliminate passive or weak phrasing like "responsible for", "in charge of", "worked on", "assisted with", "participated in".
-4. NO REPETITION: Do NOT repeat any action verbs already used within the same company/experience.
-5. LANGUAGE: Write strictly in professional, flawless English.
-6. CRITICAL ANTI-HALLUCINATION RULE:
-   - NEVER invent numbers, percentages, dollar amounts, client names, or achievements not present in the original text.
-   - If the original bullet lacks quantitative metrics, improve the active structure, clarity, and impact without fabricating data, and formulate a targeted question in the "suggestion" field asking the candidate for the missing metric (e.g., 'What was the percentage increase in efficiency?' or 'How many engineers or stakeholders did you collaborate with?').
-   - If the original bullet point already includes sufficient quantifiable metrics, "suggestion" must be null.
+1. PRESERVE LEVEL OF INVOLVEMENT (CRITICAL RULE):
+   - If the original bullet indicates support, collaboration, or participation ("helped", "assisted", "collaborated", "participated", "supported"):
+     * NEVER elevate or exaggerate the level of responsibility. “helped”, “collaborated”, or “participated” must NEVER become “implemented”, “led”, “designed”, “architected”, or “spearheaded”.
+     * Strictly preserve the collaborative role using strong collaborative action verbs in past tense (e.g., 'Collaborated on', 'Contributed to', 'Assisted with', 'Supported').
+   - Only when the original bullet explicitly reflects direct individual ownership or leadership should you use direct individual action verbs in past tense (e.g., 'Engineered', 'Optimized', 'Deployed', 'Implemented', 'Led').
+
+2. DO NOT ADD FABRICATED RESULTS, BENEFITS, TECHNOLOGIES, OR DETAILS:
+   - NEVER add technologies, tools, methodologies, client names, or duties not present in the original text.
+   - NEVER invent results, metrics, percentages, business impact, or generic benefit phrases (such as "to accelerate delivery cycles", "improving operational efficiency", "ensuring high availability", or "standardizing processes") unless explicitly stated in the source text.
+   - Stick with absolute fidelity to what the candidate wrote.
+
+3. STRUCTURE FORMULA:
+   - Action Verb + Factual Context + Result (only if the result is already present in the original text).
+   - Maximum 1-2 lines (approx 100-180 characters).
+
+4. ASK FOR MISSING RESULTS IN ATS SUGGESTION INSTEAD OF INVENTING THEM:
+   - If the original bullet DOES NOT include a measurable result or quantitative metric:
+     * DO NOT fabricate any outcome or result in the "improved" bullet.
+     * Generate a targeted, clear question in the "suggestion" field asking the candidate for the missing metric or outcome (e.g., 'What measurable impact, percentage improvement, or metric resulted from this?').
+   - If the original bullet already includes sufficient measurable results or metrics, "suggestion" must be null.
+
+5. PHRASING PROHIBITIONS:
+   - Eliminate passive or bureaucratic phrasing like "responsible for", "in charge of", "my duties included", "worked on".
+
+6. NO REPETITION: Do NOT repeat any action verbs already used within the same experience.
+7. LANGUAGE: Write strictly in professional, flawless English.
 
 Return ONLY a valid JSON object with this exact format:
 {
   "improved": "Enhanced bullet point text in English",
   "action_verb": "action verb used in past tense (lowercase)",
-  "suggestion": "Targeted question asking for missing quantifiable metric or null if already quantified"
+  "suggestion": "Targeted question asking for missing result/metric, or null if already quantified"
 }"""
 
-SUMMARY_ENHANCEMENT_SYSTEM_PROMPT_ES = """Eres un consultor de carrera experto en redacción de perfiles profesionales.
-Reescribe el resumen profesional del candidato para que sea de alto impacto:
-- Máximo 3 a 4 líneas.
-- Orientado al valor profesional, fortalezas técnicas y solución de problemas.
-- Estrictamente en Español impecable.
-- Sin frases vacías ni superlativos no fundamentados.
-- NO inventes años de experiencia ni empresas que no estén mencionadas.
+SUMMARY_ENHANCEMENT_SYSTEM_PROMPT_ES = """Eres un consultor de carrera experto en redacción de perfiles profesionales para currículums de alto impacto (ATS).
+Reescribe el resumen profesional del candidato haciéndolo conciso, directo y profesional:
+
+REGLAS ESTRICTAS:
+1. LONGITUD: Máximo 3 a 4 líneas (o 2 a 3 oraciones contundentes).
+2. SIN FRASES GENÉRICAS DE RELLENO:
+   - PROHIBIDO incluir frases genéricas de relleno, clichés y lugares comunes como: "orientado a resultados", "resolución de problemas complejos", "pensamiento estratégico", "gestión confiable", "apasionado por la tecnología", "excelentes habilidades interpersonales", "proactivo", "enfoque innovador", "capacidad de adaptación", "comprometido con la excelencia".
+   - Cada oración debe basarse exclusivamente en hechos sustanciales: especialidad técnica, área de experiencia y trayectoria profesional del candidato.
+3. FIDELIDAD ESTRICTA (NO INVENTAR):
+   - NO agregues ni inventes años de experiencia, empresas, herramientas, tecnologías ni certificaciones que no aparezcan en el texto original.
+   - No infles responsabilidades ni agregues superlativos vacíos no fundamentados.
+4. IDIOMA: Estrictamente en Español impecable y profesional.
 
 Devuelve ÚNICAMENTE un objeto JSON con este formato:
 {
   "summary_improved": "Texto del resumen profesional mejorado en español"
 }"""
 
-SUMMARY_ENHANCEMENT_SYSTEM_PROMPT_EN = """You are an executive career consultant specializing in high-impact professional profiles.
-Rewrite the candidate's professional summary to be compelling and executive-ready:
-- Maximum 3 to 4 lines.
-- Focused on core value proposition, technical strengths, and problem-solving impact.
-- Strictly in professional English.
-- No filler phrases or unfounded superlatives.
-- DO NOT invent years of experience or employers not mentioned.
+SUMMARY_ENHANCEMENT_SYSTEM_PROMPT_EN = """You are an executive career consultant and ATS resume expert.
+Rewrite the candidate's professional summary to make it concise, direct, and high-impact:
+
+STRICT RULES:
+1. LENGTH: Maximum 3 to 4 lines (or 2 to 3 strong sentences).
+2. NO GENERIC FILLER PHRASES:
+   - FORBIDDEN generic filler, buzzwords, and empty corporate clichés such as: "results-driven professional", "complex problem solver", "strategic thinker", "passionate technologist", "excellent communication skills", "proactive team player", "innovative mindset", "reliable data management", "committed to excellence".
+   - Every sentence must be grounded in substantive facts: actual technical specialty, domain expertise, and factual experience.
+3. STRICT FIDELITY (NO INVENTIONS):
+   - DO NOT invent or add years of experience, companies, tools, technologies, or credentials not mentioned in the original text.
+   - Do not exaggerate responsibilities or add unfounded superlatives.
+4. LANGUAGE: Strictly in professional, flawless English.
 
 Return ONLY a valid JSON object with this format:
 {
@@ -164,20 +257,14 @@ Genera el JSON con el bullet mejorado en español y la sugerencia de métrica si
 
     except Exception as e:
         logger.error(f"Error al mejorar viñeta con LLM: {e}", exc_info=True)
-        # Fallback determinista seguro sin inventar nada
-        cleaned = bullet_text.strip()
-        for phrase in WEAK_PHRASES:
-            if cleaned.lower().startswith(phrase):
-                cleaned = cleaned[len(phrase):].strip()
-                # Capitalizar primera letra
-                cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
-                break
+        # Fallback determinista seguro sin inventar nada y preservando nivel de participación
+        cleaned = _clean_bullet_fallback(bullet_text, is_en=is_en)
 
         has_numbers = bool(re.search(r"\d+%?", bullet_text))
         if is_en:
-            suggestion = None if has_numbers else "Can you quantify this result with a metric, percentage, or measurable impact?"
+            suggestion = None if has_numbers else "Can you quantify the result with a metric, percentage, or measurable outcome?"
         else:
-            suggestion = None if has_numbers else "¿Puedes cuantificar el resultado con alguna métrica o porcentaje?"
+            suggestion = None if has_numbers else "¿Puedes indicar el resultado obtenido o cuantificarlo con alguna métrica o porcentaje?"
 
         return BulletItem(
             original=bullet_text,
@@ -250,14 +337,9 @@ def enhance_resume_content(
         for b in exp.bullets:
             if deadline is not None and time.monotonic() >= deadline:
                 logger.warning(f"Tope de tiempo alcanzado en {exp.company}; aplicando fallback determinista para viñetas.")
-                cleaned = b.original.strip()
-                for phrase in WEAK_PHRASES:
-                    if cleaned.lower().startswith(phrase):
-                        cleaned = cleaned[len(phrase):].strip()
-                        cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
-                        break
+                cleaned = _clean_bullet_fallback(b.original, is_en=is_en)
                 has_numbers = bool(re.search(r"\d+%?", b.original))
-                sug = None if has_numbers else ("Can you quantify this result with a metric, percentage, or measurable impact?" if is_en else "¿Puedes cuantificar el resultado con alguna métrica o porcentaje?")
+                sug = None if has_numbers else ("Can you quantify the result with a metric, percentage, or measurable outcome?" if is_en else "¿Puedes indicar el resultado obtenido o cuantificarlo con alguna métrica o porcentaje?")
                 new_bullets.append(BulletItem(original=b.original, improved=cleaned, suggestion=sug))
             else:
                 improved_b = improve_bullet_point(
