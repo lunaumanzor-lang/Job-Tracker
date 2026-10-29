@@ -210,8 +210,8 @@ def test_cascade_aborts_on_deadline_with_simulated_clock():
     deadline = 125.0
     cascade = ["model-1", "model-2", "model-3", "model-4"]
 
-    with patch("time.time", side_effect=fake_time):
-        with patch("ai_client.time.time", side_effect=fake_time):
+    with patch("time.monotonic", side_effect=fake_time):
+        with patch("ai_client.time.monotonic", side_effect=fake_time):
             with patch("ai_client.genai.GenerativeModel", side_effect=MockTimingOutModel):
                 with pytest.raises(AITimeBudgetExceeded):
                     generate_content_with_retry(
@@ -248,8 +248,8 @@ def test_429_does_not_sleep_if_exceeding_deadline():
     # Deadline a 1 segundo en el futuro (101.0), pero el primer delay de 429 es de 2.0 s
     deadline = 101.0
 
-    with patch("time.time", side_effect=fake_time):
-        with patch("ai_client.time.time", side_effect=fake_time):
+    with patch("time.monotonic", side_effect=fake_time):
+        with patch("ai_client.time.monotonic", side_effect=fake_time):
             with patch("time.sleep", side_effect=lambda s: sleeps.append(s)):
                 with patch("ai_client.time.sleep", side_effect=lambda s: sleeps.append(s)):
                     with patch("ai_client.genai.GenerativeModel", side_effect=Mock429Model):
@@ -288,8 +288,8 @@ def test_effective_timeout_capped_by_remaining_time():
     # timeout_per_call = 15.0, pero tiempo restante es solo 6.5 s (deadline = 106.5)
     deadline = 106.5
 
-    with patch("time.time", side_effect=fake_time):
-        with patch("ai_client.time.time", side_effect=fake_time):
+    with patch("time.monotonic", side_effect=fake_time):
+        with patch("ai_client.time.monotonic", side_effect=fake_time):
             with patch("ai_client.genai.GenerativeModel", side_effect=MockCaptureTimeoutModel):
                 res = generate_content_with_retry(
                     contents="prompt",

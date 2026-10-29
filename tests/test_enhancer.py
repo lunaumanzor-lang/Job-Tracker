@@ -166,7 +166,7 @@ def test_enhance_resume_content_deadline_fallback():
 
     # Pasamos un deadline ya expirado (hace 10 segundos)
     import time
-    expired_deadline = time.time() - 10.0
+    expired_deadline = time.monotonic() - 10.0
     res = enhance_resume_content(resume, provider, deadline=expired_deadline)
 
     # No debe haberse llamado a la IA

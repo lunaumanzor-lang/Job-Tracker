@@ -154,7 +154,7 @@ def generate_content_with_retry(
 
     for model_name in candidate_models:
         # Regla (2): antes de probar cada modelo, si el deadline ya pasó, aborta la cascada
-        if deadline is not None and time.time() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             logger.warning(f"Presupuesto de tiempo agotado antes de probar modelo '{model_name}'. Abortando cascada.")
             raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
 
@@ -177,7 +177,7 @@ def generate_content_with_retry(
             # Regla (3): el timeout efectivo de cada llamada es min(timeout_per_call, tiempo_restante)
             call_options = dict(req_options)
             if deadline is not None:
-                tiempo_restante = deadline - time.time()
+                tiempo_restante = deadline - time.monotonic()
                 if tiempo_restante <= 0:
                     raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
                 effective_timeout = min(base_timeout, tiempo_restante)
@@ -200,7 +200,7 @@ def generate_content_with_retry(
                     if attempt < len(retry_delays):
                         delay = retry_delays[attempt]
                         # Regla (4): antes de cada sleep por 429, si ahora + delay >= deadline, aborta en vez de dormir
-                        if deadline is not None and (time.time() + delay) >= deadline:
+                        if deadline is not None and (time.monotonic() + delay) >= deadline:
                             logger.warning(
                                 f"Reintento de 429 en '{model_name}' con espera {delay}s excedería el deadline ({deadline}). Abortando."
                             )

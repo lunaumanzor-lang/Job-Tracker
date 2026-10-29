@@ -138,7 +138,7 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
     Aplica un tope de tiempo total (90 s). Si la IA no responde o se supera el límite de tiempo,
     devuelve y carga el CV estructurado sin mejoras automáticas para evitar bloqueos.
     """
-    start_time = time.time()
+    start_time = time.monotonic()
     deadline = start_time + max_duration
 
     if not target_language or target_language == "auto":
@@ -173,7 +173,7 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
             ai_failed = True
 
         # Verificar si el análisis inicial ya superó el tope total de 90s
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         if elapsed >= max_duration:
             timed_out = True
         elif provider and not ai_failed:
@@ -185,7 +185,7 @@ def process_and_enhance_cv(raw_text: str, target_language: str = "auto", max_dur
                     language=resolved_lang,
                     deadline=deadline
                 )
-                if (time.time() - start_time) >= max_duration:
+                if (time.monotonic() - start_time) >= max_duration:
                     timed_out = True
             except Exception as enhance_err:
                 logger.error(f"Error optimizando contenido con IA: {enhance_err}")

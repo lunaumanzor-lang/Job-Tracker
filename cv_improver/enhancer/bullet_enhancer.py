@@ -238,7 +238,7 @@ def enhance_resume_content(
 
     # 1. Mejorar resumen profesional
     if resume.summary:
-        if deadline is not None and time.time() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             logger.warning("Tope de tiempo alcanzado antes de mejorar resumen; conservando original.")
         else:
             resume.summary_improved = enhance_summary(resume.summary, provider, language=language, deadline=deadline)
@@ -248,7 +248,7 @@ def enhance_resume_content(
         used_verbs_for_this_company: Set[str] = set()
         new_bullets = []
         for b in exp.bullets:
-            if deadline is not None and time.time() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 logger.warning(f"Tope de tiempo alcanzado en {exp.company}; aplicando fallback determinista para viñetas.")
                 cleaned = b.original.strip()
                 for phrase in WEAK_PHRASES:

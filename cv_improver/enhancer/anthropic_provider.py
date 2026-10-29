@@ -38,12 +38,12 @@ class AnthropicProvider(LLMProvider):
         import time
         from ai_client import AITimeBudgetExceeded
 
-        if deadline is not None and time.time() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
 
         effective_timeout = timeout_per_call
         if deadline is not None:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AITimeBudgetExceeded("⏱️ El tiempo límite asignado para la operación de IA ha sido superado.")
             effective_timeout = min(timeout_per_call, remaining)
