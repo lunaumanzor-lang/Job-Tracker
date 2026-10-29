@@ -10,6 +10,7 @@ import time
 from typing import Optional, Set, Dict, Any, List
 from ..schema import ResumeSchema, ExperienceItem, BulletItem
 from .provider_base import LLMProvider
+from ai_client import AITimeBudgetExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,120 @@ Return ONLY a valid JSON object with this format:
 BULLET_ENHANCEMENT_SYSTEM_PROMPT = BULLET_ENHANCEMENT_SYSTEM_PROMPT_ES
 SUMMARY_ENHANCEMENT_SYSTEM_PROMPT = SUMMARY_ENHANCEMENT_SYSTEM_PROMPT_ES
 
+BATCH_BULLET_ENHANCEMENT_SYSTEM_PROMPT_ES = """Eres un consultor de carrera y redactor experto en currículums de alto impacto (ATS).
+Tu misión es optimizar una lista de viñetas o responsabilidades laborales haciéndolas concisas, profesionales y de alto impacto, respetando estrictamente la veracidad del contenido original.
+
+REGLAS ESTRICTAS DE REDACCIÓN:
+1. CONSERVAR EL NIVEL DE PARTICIPACIÓN (REGLA FUNDAMENTAL):
+   - Si la viñeta original indica apoyo, colaboración o asistencia ("ayudé", "colaboré", "participé", "apoyé", "asistí"):
+     * NUNCA subas ni exageres el nivel de responsabilidad. “ayudé”, “colaboré” o “participé” NUNCA deben pasar a “implementé”, “lideré”, “diseñé”, “construí” ni “arquitecté”.
+     * Conserva estrictamente el rol colaborativo utilizando verbos de acción colaborativos en pasado (ej. 'Colaboré en', 'Contribuí a', 'Apoyé en', 'Asistí en').
+   - Solo cuando la viñeta original exprese autoría individual directa o liderazgo, utiliza verbos de acción individuales en pasado (ej. 'Implementé', 'Diseñé', 'Optimizé', 'Desplegué', 'Lideré').
+
+2. NO AGREGAR RESULTADOS, BENEFICIOS, TECNOLOGÍAS NI DETALLES INVENTADOS:
+   - NUNCA agregues tecnologías, herramientas, metodologías, clientes ni tareas que no figuren explícitamente en el texto original.
+   - NUNCA inventes resultados, métricas, porcentajes, impactos ni frases genéricas de beneficio (como "para acelerar los despliegues", "mejorando la eficiencia operativa", "garantizando alta disponibilidad" o "estandarizando procesos") si el original no los menciona explícitamente.
+   - Limítate con fidelidad absoluta a lo que el candidato realmente escribió.
+
+3. FÓRMULA DE ESTRUCTURA:
+   - Verbo de acción + Contexto real + Resultado (solo si el resultado ya está presente en el texto original).
+   - Longitud máxima: 1 a 2 líneas (aproximadamente entre 100 y 180 caracteres).
+
+4. SI FALTA UN RESULTADO O MÉTRICA, SOLICÍTALO EN LA SUGERENCIA ATS EN VEZ DE INVENTARLO:
+   - Si la viñeta original NO incluye un resultado medible o métrica cuantitativa:
+     * NO inventes ningún resultado ni consecuencia en el texto de "improved".
+     * Genera una pregunta concreta y puntual en el campo "suggestion" pidiéndole al candidato el resultado o métrica faltante.
+   - Si la viñeta original ya contiene un resultado o métrica cuantitativa suficiente, el campo "suggestion" debe ser null.
+
+5. PROHIBICIONES DE ESTILO:
+   - Elimina frases pasivas o burocráticas como "responsable de", "encargado de", "encargada de", "mi rol era", "funciones incluían".
+
+6. SIN REPETICIÓN: Evita repetir verbos de acción dentro de la misma experiencia.
+7. IDIOMA: Redacta estrictamente en Español impecable y profesional.
+
+8. ESQUEMA DE SALIDA:
+   Devuelve ÚNICAMENTE un objeto JSON con la clave "bullets" que contenga una lista con exactamente el mismo número de viñetas que la entrada, en el mismo orden, respetando su identificador numérico "id":
+{
+  "bullets": [
+    {
+      "id": 1,
+      "improved": "Texto del bullet mejorado en español",
+      "action_verb": "verbo utilizado en pasado (en minúsculas)",
+      "suggestion": "Pregunta sobre métrica faltante o null si ya tenía resultados suficientes"
+    }
+  ]
+}"""
+
+BATCH_BULLET_ENHANCEMENT_SYSTEM_PROMPT_EN = """You are an executive career advisor and expert ATS resume writer.
+Your mission is to optimize a list of bullet points or job duties into concise, professional, high-impact achievements, strictly preserving truthfulness and factual accuracy.
+
+STRICT WRITING RULES:
+1. PRESERVE LEVEL OF INVOLVEMENT (CRITICAL RULE):
+   - If the original bullet indicates support, collaboration, or participation ("helped", "assisted", "collaborated", "participated", "supported"):
+     * NEVER elevate or exaggerate the level of responsibility. “helped”, “collaborated”, or “participated” must NEVER become “implemented”, “led”, “designed”, “architected”, or “spearheaded”.
+     * Strictly preserve the collaborative role using strong collaborative action verbs in past tense (e.g., 'Collaborated on', 'Contributed to', 'Assisted with', 'Supported').
+   - Only when the original bullet explicitly reflects direct individual ownership or leadership should you use direct individual action verbs in past tense (e.g., 'Engineered', 'Optimized', 'Deployed', 'Implemented', 'Led').
+
+2. DO NOT ADD FABRICATED RESULTS, BENEFITS, TECHNOLOGIES, OR DETAILS:
+   - NEVER add technologies, tools, methodologies, client names, or duties not present in the original text.
+   - NEVER invent results, metrics, percentages, business impact, or generic benefit phrases unless explicitly stated in the source text.
+   - Stick with absolute fidelity to what the candidate wrote.
+
+3. STRUCTURE FORMULA:
+   - Action Verb + Factual Context + Result (only if the result is already present in the original text).
+   - Maximum 1-2 lines (approx 100-180 characters).
+
+4. ASK FOR MISSING RESULTS IN ATS SUGGESTION INSTEAD OF INVENTING THEM:
+   - If the original bullet DOES NOT include a measurable result or quantitative metric:
+     * DO NOT fabricate any outcome or result in the "improved" bullet.
+     * Generate a targeted, clear question in the "suggestion" field asking the candidate for the missing metric or outcome.
+   - If the original bullet already includes sufficient measurable results or metrics, "suggestion" must be null.
+
+5. PHRASING PROHIBITIONS:
+   - Eliminate passive or bureaucratic phrasing like "responsible for", "in charge of", "my duties included", "worked on".
+
+6. NO REPETITION: Avoid repeating action verbs within the same company.
+7. LANGUAGE: Write strictly in professional, flawless English.
+
+8. MANDATORY OUTPUT SCHEMA:
+   Return ONLY a valid JSON object with a "bullets" array matching the exact number and order of input bullets, preserving each bullet's "id":
+{
+  "bullets": [
+    {
+      "id": 1,
+      "improved": "Enhanced bullet point text in English",
+      "action_verb": "action verb used in past tense (lowercase)",
+      "suggestion": "Targeted question asking for missing result/metric, or null if already quantified"
+    }
+  ]
+}"""
+
+
+def _format_batch_prompt(total_bullets: List[Dict[str, Any]], is_en: bool = False) -> str:
+    """Construye el prompt en lote con identificadores claros para cada viñeta."""
+    if is_en:
+        lines = [
+            "Please enhance the following bullet points following all strict ATS guidelines.",
+            "Return a JSON object with a 'bullets' array preserving exact IDs and order:\n"
+        ]
+        for b in total_bullets:
+            lines.append(
+                f"- [id: {b['id']}] Company: {b['company']} | Position: {b['position']} | Original: \"{b['original'].strip()}\""
+            )
+        lines.append("\nGenerate the JSON output now.")
+        return "\n".join(lines)
+    else:
+        lines = [
+            "Optimiza la siguiente lista de viñetas siguiendo todas las reglas ATS.",
+            "Devuelve un objeto JSON con la clave 'bullets' conservando exactamente los IDs y el orden:\n"
+        ]
+        for b in total_bullets:
+            lines.append(
+                f"- [id: {b['id']}] Empresa: {b['company']} | Cargo: {b['position']} | Viñeta original: \"{b['original'].strip()}\""
+            )
+        lines.append("\nGenera el JSON de salida ahora.")
+        return "\n".join(lines)
+
 
 def improve_bullet_point(
     bullet_text: str,
@@ -379,7 +494,13 @@ def enhance_resume_content(
     """
     Mejora todos los bullets y el resumen profesional de un ResumeSchema en el idioma solicitado ('es' o 'en').
     Retorna el mismo ResumeSchema con campos 'improved' y 'suggestion' completados.
-    Si se especifica un deadline y el tiempo expira, aplica un fallback determinista inmediato sin llamar a la IA.
+
+    Reglas de procesamiento:
+    (1) Procesa todas las viñetas en una sola llamada en lote con timeout_per_call=45 y el deadline de la operación.
+    (2) Salida en JSON validado con esquema fijo: mismo número de viñetas que la entrada, mismo orden y un identificador por viñeta.
+    (3) Si el JSON es inválido o falta alguna viñeta, usa el respaldo de una llamada por viñeta solo para las que falten, respetando el deadline.
+    (4) Conserva las reglas del prompt: no inventar cifras, tecnologías ni beneficios, y no subir el nivel de participación.
+    (5) Aplica a cada viñeta del lote la validación en código que descarta salidas que suben de verbo de apoyo a verbo de autoría, usando el respaldo determinista para esa viñeta.
     """
     is_en = (language == "en")
 
@@ -390,25 +511,150 @@ def enhance_resume_content(
         else:
             resume.summary_improved = enhance_summary(resume.summary, provider, language=language, deadline=deadline)
 
-    # 2. Mejorar bullets experiencia por experiencia
-    for exp in resume.experience:
-        used_verbs_for_this_company: Set[str] = set()
-        new_bullets = []
-        for b in exp.bullets:
-            if deadline is not None and time.monotonic() >= deadline:
-                logger.warning(f"Tope de tiempo alcanzado en {exp.company}; aplicando fallback determinista para viñetas.")
-                new_bullets.append(_get_deterministic_bullet_fallback(b.original, is_en=is_en))
-            else:
-                improved_b = improve_bullet_point(
-                    bullet_text=b.original,
-                    company=exp.company,
-                    position=exp.position,
-                    used_verbs=used_verbs_for_this_company,
-                    provider=provider,
-                    language=language,
-                    deadline=deadline
+    # 2. Recopilar todas las viñetas de todas las experiencias para procesar en lote
+    total_bullets: List[Dict[str, Any]] = []
+    for exp_idx, exp in enumerate(resume.experience):
+        for b_idx, b in enumerate(exp.bullets):
+            total_bullets.append({
+                "id": len(total_bullets) + 1,
+                "exp_idx": exp_idx,
+                "b_idx": b_idx,
+                "company": exp.company,
+                "position": exp.position,
+                "original": b.original
+            })
+
+    if not total_bullets:
+        return resume
+
+    # Si el tiempo ya expiró antes de iniciar las viñetas, aplicar determinista directo
+    if deadline is not None and time.monotonic() >= deadline:
+        logger.warning("Tope de tiempo alcanzado antes de procesar viñetas; aplicando fallback determinista.")
+        for exp in resume.experience:
+            exp.bullets = [_get_deterministic_bullet_fallback(b.original, is_en=is_en) for b in exp.bullets]
+        return resume
+
+    # Regla (1): Una sola llamada en lote con timeout_per_call=45 y el deadline de la operación
+    batch_data = None
+    batch_prompt = _format_batch_prompt(total_bullets, is_en=is_en)
+    batch_sys_prompt = BATCH_BULLET_ENHANCEMENT_SYSTEM_PROMPT_EN if is_en else BATCH_BULLET_ENHANCEMENT_SYSTEM_PROMPT_ES
+
+    try:
+        batch_data = provider.generate_json(
+            prompt=batch_prompt,
+            system_prompt=batch_sys_prompt,
+            temperature=0.2,
+            deadline=deadline,
+            timeout_per_call=45.0
+        )
+    except AITimeBudgetExceeded:
+        logger.warning("Tope de tiempo (deadline) agotado durante llamada por lote de viñetas.")
+        batch_data = None
+    except Exception as batch_err:
+        logger.warning(f"Error en llamada por lote de viñetas: {batch_err}. Se recurrirá al respaldo para las viñetas.")
+        batch_data = None
+
+    # Regla (2): salida en JSON validado con esquema fijo: mismo número de viñetas que la entrada,
+    # mismo orden y un identificador por viñeta.
+    raw_bullets = None
+    if isinstance(batch_data, dict):
+        raw_bullets = batch_data.get("bullets")
+    elif isinstance(batch_data, list):
+        raw_bullets = batch_data
+
+    validated_batch_by_id: Dict[int, Dict[str, Any]] = {}
+    if isinstance(raw_bullets, list):
+        # Mapeo por ID numérico explícito
+        for entry in raw_bullets:
+            if isinstance(entry, dict) and "id" in entry:
+                try:
+                    b_id = int(entry["id"])
+                    if entry.get("improved"):
+                        validated_batch_by_id[b_id] = entry
+                except (ValueError, TypeError):
+                    pass
+        # Si no coincidieron por ID pero la longitud y orden corresponden exactamente a total_bullets:
+        if not validated_batch_by_id and len(raw_bullets) == len(total_bullets):
+            for idx, entry in enumerate(raw_bullets):
+                if isinstance(entry, dict) and entry.get("improved"):
+                    validated_batch_by_id[total_bullets[idx]["id"]] = entry
+
+    # Procesar viñeta por viñeta aplicando reglas (3), (4) y (5)
+    used_verbs_by_exp: Dict[int, Set[str]] = {idx: set() for idx in range(len(resume.experience))}
+    processed_bullets: Dict[int, BulletItem] = {}
+
+    for b_info in total_bullets:
+        b_id = b_info["id"]
+        exp_idx = b_info["exp_idx"]
+        orig_text = b_info["original"]
+        used_verbs = used_verbs_by_exp[exp_idx]
+
+        if b_id in validated_batch_by_id:
+            # (4) y (5) Viñeta presente en el lote validado
+            item_dict = validated_batch_by_id[b_id]
+            improved_text = (item_dict.get("improved") or orig_text).strip()
+            sug = item_dict.get("suggestion")
+            suggestion = sug.strip() if (isinstance(sug, str) and sug.strip()) else None
+            action_verb = (item_dict.get("action_verb") or "").lower().strip() if isinstance(item_dict.get("action_verb"), str) else ""
+
+            # Regla (5): validación en código que descarta salidas que suben de verbo de apoyo a verbo de autoría
+            orig_first_verb = _extract_first_verb(orig_text)
+            improved_first_verb = _extract_first_verb(improved_text)
+
+            if orig_first_verb in SUPPORT_VERBS and (
+                improved_first_verb in LEADERSHIP_AUTHORSHIP_VERBS or action_verb in LEADERSHIP_AUTHORSHIP_VERBS
+            ):
+                logger.warning(
+                    f"Viñeta lote id {b_id} descartada por elevar nivel de participación a '{improved_text}'. "
+                    f"Aplicando respaldo determinista."
                 )
-                new_bullets.append(improved_b)
-        exp.bullets = new_bullets
+                fallback_item = _get_deterministic_bullet_fallback(orig_text, is_en=is_en)
+                fb_verb = _extract_first_verb(fallback_item.improved)
+                if fb_verb:
+                    used_verbs.add(fb_verb)
+                processed_bullets[b_id] = fallback_item
+            else:
+                if action_verb:
+                    used_verbs.add(action_verb)
+                elif improved_first_verb:
+                    used_verbs.add(improved_first_verb)
+
+                processed_bullets[b_id] = BulletItem(
+                    original=orig_text,
+                    improved=improved_text,
+                    suggestion=suggestion
+                )
+        else:
+            # Regla (3): falta la viñeta o JSON inválido -> usar respaldo de una llamada por viñeta
+            # solo para las que falten, respetando el deadline
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.warning(f"Deadline alcanzado antes de respaldar viñeta id {b_id}; aplicando determinista.")
+                processed_bullets[b_id] = _get_deterministic_bullet_fallback(orig_text, is_en=is_en)
+            else:
+                try:
+                    single_item = improve_bullet_point(
+                        bullet_text=orig_text,
+                        company=b_info["company"],
+                        position=b_info["position"],
+                        used_verbs=used_verbs,
+                        provider=provider,
+                        language=language,
+                        deadline=deadline
+                    )
+                    processed_bullets[b_id] = single_item
+                except AITimeBudgetExceeded:
+                    logger.warning(f"Tope de tiempo (deadline) superado al respaldar viñeta id {b_id}.")
+                    processed_bullets[b_id] = _get_deterministic_bullet_fallback(orig_text, is_en=is_en)
+                except Exception as err:
+                    logger.error(f"Error en respaldo individual para viñeta id {b_id}: {err}")
+                    processed_bullets[b_id] = _get_deterministic_bullet_fallback(orig_text, is_en=is_en)
+
+    # Reconstruir las viñetas en la estructura original de experiencias
+    for exp_idx, exp in enumerate(resume.experience):
+        exp.bullets = [
+            processed_bullets[b_info["id"]]
+            for b_info in total_bullets
+            if b_info["exp_idx"] == exp_idx
+        ]
 
     return resume
