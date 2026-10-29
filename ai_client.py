@@ -24,6 +24,33 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# ==============================================================================
+# LISTA CENTRALIZADA DE MODELOS CANDIDATOS GEMINI
+# Medición realizada: 2026-10-28 (5 llamadas de prueba "Di OK", timeout=15s por modelo).
+# NOTA: El orden es provisional, ya que la latencia y disponibilidad de estos modelos
+# varía a lo largo del día y según la carga de los servidores de Google.
+#
+# Resultados de la medición de referencia (2026-10-28):
+# | Modelo                 | Éxitos | 504 | 429 | 404 | Lat. Mín | Lat. Med | Lat. Máx | Estado
+# | gemini-3.5-flash-lite  | 5/5    | 0   | 0   | 0   | 0.63 s   | 0.95 s   | 1.64 s   | Activo (más rápido y económico)
+# | gemini-3.1-flash-lite  | 5/5    | 0   | 0   | 0   | 0.71 s   | 1.29 s   | 2.65 s   | Activo (económico y estable)
+# | gemini-3.5-flash       | 5/5    | 0   | 0   | 0   | 3.36 s   | 3.79 s   | 5.56 s   | Activo (capacidad estándar)
+#
+# Modelos excluidos o retirados:
+# - gemini-1.5-*, gemini-2.0-*, gemini-2.5-flash, gemini-pro: Dan 404 sistemático (retirados o no existen).
+# - gemini-3.6-flash, gemini-3.7-flash, gemini-3.8-flash, gemini-flash-latest: 429 (cuota agotada) o 504 repetidos.
+# - gemini-flash-lite-latest, gemini-3-flash-preview: alias mutable / versión preview reemplazada.
+# ==============================================================================
+GEMINI_MODEL_CASCADE: List[str] = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+]
+
+# Cascada para OCR de PDFs escaneados (los modelos Flash son multimodal nativos)
+GEMINI_OCR_MODEL_CASCADE: List[str] = GEMINI_MODEL_CASCADE
+
+
 def get_ai_api_key(provider: str = "gemini") -> Optional[str]:
     """
     Obtiene la clave de API para el proveedor indicado ('gemini' o 'anthropic').
@@ -115,7 +142,7 @@ class AITimeBudgetExceeded(RuntimeError):
 
 def generate_content_with_retry(
     contents: Any,
-    candidate_models: List[str],
+    candidate_models: Optional[List[str]] = None,
     generation_config: Optional[Dict[str, Any]] = None,
     api_key: Optional[str] = None,
     request_options: Optional[Dict[str, Any]] = None,
@@ -141,7 +168,8 @@ def generate_content_with_retry(
 
     genai.configure(api_key=key)
 
-    if not candidate_models:
+    models_to_try = candidate_models if candidate_models is not None else GEMINI_MODEL_CASCADE
+    if not models_to_try:
         raise RuntimeError(
             "⚠️ Servicio de IA no disponible temporalmente (sin modelos configurados)."
         )
@@ -152,7 +180,7 @@ def generate_content_with_retry(
 
     last_error: Optional[Exception] = None
 
-    for model_name in candidate_models:
+    for model_name in models_to_try:
         # Regla (2): antes de probar cada modelo, si el deadline ya pasó, aborta la cascada
         if deadline is not None and time.monotonic() >= deadline:
             logger.warning(f"Presupuesto de tiempo agotado antes de probar modelo '{model_name}'. Abortando cascada.")

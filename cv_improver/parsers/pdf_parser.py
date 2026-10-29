@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 import pdfplumber
 from .base import ScannedPDFError, CorruptFileError, EmptyFileError
-from ai_client import get_ai_api_key, generate_content_with_retry
+from ai_client import get_ai_api_key, generate_content_with_retry, GEMINI_OCR_MODEL_CASCADE
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _try_ocr_page_image(page, page_num: int) -> Optional[str]:
 
         resp = generate_content_with_retry(
             contents=[prompt_ocr, page_img],
-            candidate_models=["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"],
+            candidate_models=GEMINI_OCR_MODEL_CASCADE,
             api_key=api_key,
             request_options={"timeout": 45}
         )

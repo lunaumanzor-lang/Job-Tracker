@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, Tuple, List
 import google.generativeai as genai
 
 from database import SKILL_CATEGORIES
-from ai_client import get_ai_api_key, generate_content_with_retry
+from ai_client import get_ai_api_key, generate_content_with_retry, GEMINI_MODEL_CASCADE
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +29,11 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
     """
     Selecciona el mejor modelo disponible para la API Key dada,
     consultando genai.list_models() para evitar errores 404 por incompatibilidad de versión.
+    Utiliza la lista centralizada GEMINI_MODEL_CASCADE de ai_client.
     """
     genai.configure(api_key=api_key)
 
-    candidatos_preferidos = [
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-pro"
-    ]
+    candidatos_preferidos = GEMINI_MODEL_CASCADE
 
     try:
         # Consultamos qué modelos soporta esta API Key en particular
@@ -57,7 +47,7 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
             # Buscamos si alguno de nuestros preferidos está en los disponibles
             for cand in candidatos_preferidos:
                 for disp in modelos_disponibles:
-                    # m.name suele venir como "models/gemini-1.5-flash"
+                    # m.name suele venir como "models/gemini-3.5-flash-lite"
                     if cand == disp or f"models/{cand}" == disp:
                         return genai.GenerativeModel(disp, generation_config={"temperature": 0.2})
             
@@ -67,7 +57,7 @@ def get_generative_model(api_key: str) -> genai.GenerativeModel:
         logger.warning(f"No se pudo consultar list_models(): {err}")
 
     # Fallback predeterminado si list_models falla por permisos
-    return genai.GenerativeModel("gemini-1.5-flash-latest", generation_config={"temperature": 0.2})
+    return genai.GenerativeModel(GEMINI_MODEL_CASCADE[0], generation_config={"temperature": 0.2})
 
 
 
@@ -384,17 +374,7 @@ TEXTO DEL CURRÍCULUM A ANALIZAR:
 \"\"\"
 """
 
-    # Cascada de modelos activos con cuota disponible (priorizamos modelos lite que tienen cuota amplia)
-    modelos_a_probar = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-3.6-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest"
-    ]
+    modelos_a_probar = GEMINI_MODEL_CASCADE
 
     response = generate_content_with_retry(
         contents=prompt,
@@ -636,16 +616,7 @@ REGLAS DE RESPUESTA:
 }}
 """
 
-    modelos_a_probar = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-3.6-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest"
-    ]
+    modelos_a_probar = GEMINI_MODEL_CASCADE
 
     response = generate_content_with_retry(
         contents=prompt,
@@ -867,14 +838,7 @@ Ejemplo exacto de formato:
 ]
 """
 
-    modelos_a_probar = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-flash-latest"
-    ]
+    modelos_a_probar = GEMINI_MODEL_CASCADE
 
     resp = generate_content_with_retry(
         contents=prompt,
@@ -1028,14 +992,7 @@ REGLAS DE SALIDA:
 ]
 """
 
-    modelos_a_probar = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-flash-latest"
-    ]
+    modelos_a_probar = GEMINI_MODEL_CASCADE
 
     resp = generate_content_with_retry(
         contents=prompt,
@@ -1177,14 +1134,7 @@ REGLAS DE FORMATO:
 }}
 """
 
-    modelos_a_probar = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3-flash-preview",
-        "gemini-3.5-flash",
-        "gemini-flash-latest"
-    ]
+    modelos_a_probar = GEMINI_MODEL_CASCADE
 
     resp = generate_content_with_retry(
         contents=prompt,
@@ -1385,14 +1335,7 @@ Bullet actual:
     # Llamada real con cascada de modelos Gemini
     active_key = api_key or get_api_key()
     if active_key:
-        modelos_a_probar = [
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
-            "gemini-3.5-flash",
-            "gemini-flash-latest"
-        ]
+        modelos_a_probar = GEMINI_MODEL_CASCADE
         try:
             resp = generate_content_with_retry(
                 contents=prompt,
@@ -1471,13 +1414,7 @@ Texto de la vacante:
 \"\"\"
 """
 
-    modelos = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-3.5-flash",
-        "gemini-flash-latest"
-    ]
+    modelos = GEMINI_MODEL_CASCADE
 
     try:
         resp = generate_content_with_retry(

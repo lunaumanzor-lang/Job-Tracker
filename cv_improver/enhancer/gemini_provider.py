@@ -7,19 +7,12 @@ con cascada de modelos para garantizar alta disponibilidad.
 import logging
 from typing import Optional
 from .provider_base import LLMProvider
-from ai_client import get_ai_api_key, generate_content_with_retry
+from ai_client import get_ai_api_key, generate_content_with_retry, GEMINI_MODEL_CASCADE
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODELS_CASCADE = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-3-flash-preview",
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
-    "gemini-flash-latest"
-]
+# Cascada de modelos centralizada en ai_client.py
+GEMINI_MODELS_CASCADE = GEMINI_MODEL_CASCADE
 
 
 class GeminiProvider(LLMProvider):

@@ -17,7 +17,9 @@ from ai_client import (
     _is_429_error,
     _is_404_or_503_error,
     _is_timeout_error,
-    AITimeBudgetExceeded
+    AITimeBudgetExceeded,
+    GEMINI_MODEL_CASCADE,
+    GEMINI_OCR_MODEL_CASCADE
 )
 
 
@@ -304,5 +306,108 @@ def test_effective_timeout_capped_by_remaining_time():
     assert received_timeout[0] == pytest.approx(6.5, rel=1e-3), (
         f"El timeout efectivo debió ser 6.5s, se obtuvo {received_timeout[0]}"
     )
+
+
+def test_cascade_contains_no_retired_or_inexistent_models():
+    """Comprueba que la lista GEMINI_MODEL_CASCADE no contiene modelos retirados (1.5, 2.0, 2.5, pro)."""
+    assert GEMINI_MODEL_CASCADE == [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash"
+    ]
+    for model in GEMINI_MODEL_CASCADE:
+        assert "1.5" not in model, f"El modelo {model} pertenece a la serie retirada 1.5"
+        assert "2.0" not in model, f"El modelo {model} pertenece a la serie retirada 2.0"
+        assert "2.5" not in model, f"El modelo {model} pertenece a la serie inexistente 2.5"
+        assert "pro" not in model, f"El modelo {model} no debe incluir la serie pro retirada"
+
+
+def test_three_routes_use_same_cascade_list():
+    """Comprueba que ai_service, gemini_provider y pdf_parser usan la misma lista unificada."""
+    import ai_service
+    from cv_improver.enhancer.gemini_provider import GEMINI_MODELS_CASCADE, GeminiProvider
+    from cv_improver.parsers.pdf_parser import _try_ocr_page_image
+    from PIL import Image
+
+    # 1. ai_service usa GEMINI_MODEL_CASCADE
+    # Simulamos genai.list_models devolviendo modelos disponibles
+    mock_model_obj = MagicMock()
+    mock_model_obj.name = "models/gemini-3.5-flash-lite"
+    mock_model_obj.supported_generation_methods = ["generateContent"]
+
+    with patch("ai_service.genai.list_models", return_value=[mock_model_obj]):
+        with patch("ai_service.genai.configure"):
+            with patch("ai_service.genai.GenerativeModel") as mock_gen_model:
+                ai_service.get_generative_model("fake-key")
+                mock_gen_model.assert_called_with("models/gemini-3.5-flash-lite", generation_config={"temperature": 0.2})
+
+    # 2. gemini_provider usa GEMINI_MODEL_CASCADE
+    assert GEMINI_MODELS_CASCADE == GEMINI_MODEL_CASCADE
+    with patch("cv_improver.enhancer.gemini_provider.generate_content_with_retry") as mock_gen_retry:
+        mock_resp = MagicMock()
+        mock_resp.text = "Respuesta mejorada"
+        mock_gen_retry.return_value = mock_resp
+
+        provider = GeminiProvider(api_key="fake-key")
+        res = provider.generate_text("Prompt de prueba")
+        assert res == "Respuesta mejorada"
+        mock_gen_retry.assert_called_once()
+        _, kwargs = mock_gen_retry.call_args
+        assert kwargs.get("candidate_models") == GEMINI_MODEL_CASCADE
+
+    # 3. pdf_parser usa GEMINI_OCR_MODEL_CASCADE (idéntica a GEMINI_MODEL_CASCADE)
+    assert GEMINI_OCR_MODEL_CASCADE == GEMINI_MODEL_CASCADE
+    mock_page = MagicMock()
+    mock_page.images = [{"width": 500, "height": 500}]
+    mock_page_img = MagicMock()
+    mock_page_img.original = Image.new("RGB", (100, 100))
+    mock_page.to_image.return_value = mock_page_img
+
+    with patch("cv_improver.parsers.pdf_parser.generate_content_with_retry") as mock_ocr_retry:
+        mock_resp = MagicMock()
+        mock_resp.text = "Texto extraído de la página de currículum con éxito por OCR"
+        mock_ocr_retry.return_value = mock_resp
+
+        with patch("cv_improver.parsers.pdf_parser.get_ai_api_key", return_value="fake-key"):
+            ocr_text = _try_ocr_page_image(mock_page, page_num=1)
+            assert ocr_text is not None
+            mock_ocr_retry.assert_called_once()
+            _, kwargs = mock_ocr_retry.call_args
+            assert kwargs.get("candidate_models") == GEMINI_MODEL_CASCADE
+
+
+def test_404_model_skipped_without_delay_in_cascade():
+    """Comprueba que un modelo que responde con 404 se salta inmediatamente sin esperas (sin sleep)."""
+    sleeps = []
+    models_called = []
+
+    class MockModelCascade404:
+        def __init__(self, model_name, **kwargs):
+            self.model_name = model_name
+            models_called.append(model_name)
+
+        def generate_content(self, *args, **kwargs):
+            if self.model_name == "gemini-3.5-flash-lite":
+                exc = Exception("404 Model gemini-3.5-flash-lite not found")
+                exc.code = 404
+                raise exc
+            resp = MagicMock()
+            resp.text = "OK desde segundo modelo"
+            return resp
+
+    with patch("ai_client.genai.GenerativeModel", side_effect=MockModelCascade404):
+        with patch("time.sleep", side_effect=lambda s: sleeps.append(s)):
+            with patch("ai_client.time.sleep", side_effect=lambda s: sleeps.append(s)):
+                result = generate_content_with_retry(
+                    contents="Di OK",
+                    candidate_models=["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+                    api_key="fake-key"
+                )
+                assert result.text == "OK desde segundo modelo"
+
+    # Verifica que NO durmió absolutamente nada ante el 404
+    assert sleeps == [], f"El error 404 debe saltarse sin ninguna espera, pero se llamó a sleep: {sleeps}"
+    assert models_called == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+
 
 
