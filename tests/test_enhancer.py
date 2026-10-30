@@ -597,5 +597,281 @@ def test_batch_enhancement_elevating_verb_is_discarded_in_batch():
     assert "migración a contenedores docker" in bullets[1].improved.lower()
 
 
+def test_verb_anti_exaggeration_managed_to_directed_rejected():
+    """
+    Verifica que 'Managed' (Nivel 2) no pueda escalar a 'Directed' (Nivel 3).
+    Si el modelo insiste en 'Directed', la viñeta mejorada es rechazada y se devuelve el original sin cambios.
+    """
+    class DirectedMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Directed VMware Infrastructure Operations across all datacenters.",
+                "action_verb": "directed",
+                "suggestion": None
+            })
+
+    bullet = "Managed VMware Infrastructure"
+    item = improve_bullet_point(
+        bullet_text=bullet,
+        company="Enterprise Corp",
+        position="Systems Engineer",
+        used_verbs=set(),
+        provider=DirectedMockProvider(),
+        language="en"
+    )
+    assert not item.improved.lower().startswith("directed")
+    assert not item.improved.lower().startswith("led")
+    assert item.improved.startswith("Managed")
+
+
+def test_verb_anti_exaggeration_managed_to_administered_accepted():
+    """
+    Verifica que 'Managed' (Nivel 2) puede pasar a un sinónimo del mismo nivel como 'Administered' (Nivel 2).
+    """
+    class AdministeredMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Administered VMware Infrastructure and virtualization cluster environments.",
+                "action_verb": "administered",
+                "suggestion": None
+            })
+
+    bullet = "Managed VMware Infrastructure"
+    item = improve_bullet_point(
+        bullet_text=bullet,
+        company="Enterprise Corp",
+        position="Systems Engineer",
+        used_verbs=set(),
+        provider=AdministeredMockProvider(),
+        language="en"
+    )
+    assert item.improved.startswith("Administered")
+    assert "administered" in item.improved.lower()
+
+
+def test_verb_anti_exaggeration_helped_to_led_rejected():
+    """
+    Verifica que 'helped' (Nivel 1) no pueda escalar a 'led' (Nivel 3).
+    """
+    class LedMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Led engineering team during container deployment and testing.",
+                "action_verb": "led",
+                "suggestion": None
+            })
+
+    bullet = "Helped deployment team during release cycles."
+    item = improve_bullet_point(
+        bullet_text=bullet,
+        company="Startup Inc",
+        position="Junior Dev",
+        used_verbs=set(),
+        provider=LedMockProvider(),
+        language="en"
+    )
+    assert not item.improved.lower().startswith("led")
+    assert not item.improved.lower().startswith("directed")
+
+
+def test_verb_anti_exaggeration_unknown_verb_conserved_english():
+    """
+    Si el verbo original no está en la lista (desconocido), la viñeta mejorada debe conservar ese mismo verbo.
+    """
+    class UnknownVerbChangerProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Directed resolution of critical network latency outages.",
+                "action_verb": "directed",
+                "suggestion": None
+            })
+
+    class UnknownVerbKeeperProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Troubleshot critical network outages to ensure high service availability.",
+                "action_verb": "troubleshot",
+                "suggestion": None
+            })
+
+    bullet = "Troubleshot critical network outages"
+
+    # Caso A: Modelo intenta cambiar el verbo desconocido a 'Directed' -> Rechazado
+    item_rejected = improve_bullet_point(
+        bullet_text=bullet,
+        company="Net Corp",
+        position="Net Admin",
+        used_verbs=set(),
+        provider=UnknownVerbChangerProvider(),
+        language="en"
+    )
+    assert not item_rejected.improved.lower().startswith("directed")
+    assert item_rejected.improved.startswith("Troubleshot")
+
+    # Caso B: Modelo conserva el verbo desconocido 'Troubleshot' -> Aceptado
+    item_accepted = improve_bullet_point(
+        bullet_text=bullet,
+        company="Net Corp",
+        position="Net Admin",
+        used_verbs=set(),
+        provider=UnknownVerbKeeperProvider(),
+        language="en"
+    )
+    assert item_accepted.improved.startswith("Troubleshot")
+    assert "high service availability" in item_accepted.improved
+
+
+def test_verb_anti_exaggeration_spanish_cases():
+    """
+    Prueba los mismos casos en español:
+    - Gestioné → Dirigí (rechazado, Nivel 2 -> Nivel 3)
+    - Gestioné → Administré (aceptado, Nivel 2 -> Nivel 2)
+    - Ayudé → Lideré (rechazado, Nivel 1 -> Nivel 3)
+    - Verbo desconocido conservado (Diagnosticamos → Dirigí rechazado; Diagnosticamos → Diagnosticamos aceptado)
+    """
+    class DirigiMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Dirigí la infraestructura de virtualización VMware en múltiples centros de datos.",
+                "action_verb": "dirigí",
+                "suggestion": None
+            })
+
+    class AdministreMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Administré la infraestructura de virtualización VMware y servidores ESXi.",
+                "action_verb": "administré",
+                "suggestion": None
+            })
+
+    class LidereMockProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Lideré el despliegue del pipeline de entrega continua.",
+                "action_verb": "lideré",
+                "suggestion": None
+            })
+
+    class DiagnosticamosChangerProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Dirigí la resolución de fallas de conectividad en enlaces de fibra.",
+                "action_verb": "dirigí",
+                "suggestion": None
+            })
+
+    class DiagnosticamosKeeperProvider(LLMProvider):
+        def generate_text(self, prompt, **kwargs):
+            return json.dumps({
+                "improved": "Diagnosticamos fallas críticas de conectividad en enlaces de fibra garantizando el enlace.",
+                "action_verb": "diagnosticamos",
+                "suggestion": None
+            })
+
+    # 1. Gestioné → Dirigí rechazado
+    item1 = improve_bullet_point(
+        bullet_text="Gestioné la infraestructura VMware",
+        company="Empresa SA",
+        position="Ingeniero de Sistemas",
+        used_verbs=set(),
+        provider=DirigiMockProvider(),
+        language="es"
+    )
+    assert not item1.improved.lower().startswith("dirigí")
+    assert not item1.improved.lower().startswith("dirigi")
+    assert not item1.improved.lower().startswith("lideré")
+    assert item1.improved.startswith("Gestioné")
+
+    # 2. Gestioné → Administré aceptado
+    item2 = improve_bullet_point(
+        bullet_text="Gestioné la infraestructura VMware",
+        company="Empresa SA",
+        position="Ingeniero de Sistemas",
+        used_verbs=set(),
+        provider=AdministreMockProvider(),
+        language="es"
+    )
+    assert item2.improved.startswith("Administré")
+
+    # 3. Ayudé → Lideré rechazado
+    item3 = improve_bullet_point(
+        bullet_text="Ayudé en el despliegue del pipeline de entrega continua.",
+        company="Empresa SA",
+        position="Desarrollador Junior",
+        used_verbs=set(),
+        provider=LidereMockProvider(),
+        language="es"
+    )
+    assert not item3.improved.lower().startswith("lideré")
+    assert not item3.improved.lower().startswith("lidere")
+
+    # 4. Verbo desconocido conservado:
+    # 4a. Cambiado a 'Dirigí' -> Rechazado
+    item4a = improve_bullet_point(
+        bullet_text="Diagnosticamos fallas críticas de conectividad en enlaces de fibra.",
+        company="Telecom Corp",
+        position="Ingeniero NOC",
+        used_verbs=set(),
+        provider=DiagnosticamosChangerProvider(),
+        language="es"
+    )
+    assert not item4a.improved.lower().startswith("dirigí")
+    assert item4a.improved.startswith("Diagnosticamos")
+
+    # 4b. Conservado 'Diagnosticamos' -> Aceptado
+    item4b = improve_bullet_point(
+        bullet_text="Diagnosticamos fallas críticas de conectividad en enlaces de fibra.",
+        company="Telecom Corp",
+        position="Ingeniero NOC",
+        used_verbs=set(),
+        provider=DiagnosticamosKeeperProvider(),
+        language="es"
+    )
+    assert item4b.improved.startswith("Diagnosticamos")
+    assert "fallas críticas de conectividad" in item4b.improved
+
+
+def test_validate_verb_enhancement_shared_unit_cases():
+    """
+    Pruebas directas de la función compartida validate_verb_enhancement:
+    niveles 1, 2, 3, formas verbales con/sin tilde, gerundios e infinitivos.
+    """
+    from cv_improver.enhancer.bullet_enhancer import validate_verb_enhancement
+
+    # Nivel 1 no puede subir a Nivel 2 ni Nivel 3
+    valid, _ = validate_verb_enhancement("Helped with testing", "Implemented automated tests", "implemented")
+    assert not valid
+    valid, _ = validate_verb_enhancement("Ayudé en las pruebas", "Lideré las pruebas automatizadas", "lideré")
+    assert not valid
+
+    # Nivel 2 no puede subir a Nivel 3
+    valid, _ = validate_verb_enhancement("Managed VMware infrastructure", "Directed infrastructure operations", "directed")
+    assert not valid
+    valid, _ = validate_verb_enhancement("Managing VMware infrastructure", "Leading infrastructure operations", "leading")
+    assert not valid
+    valid, _ = validate_verb_enhancement("Gestioné la infraestructura", "Dirigí las operaciones", "dirigí")
+    assert not valid
+    valid, _ = validate_verb_enhancement("Gestione la infraestructura", "Lidere el equipo", "lidere")
+    assert not valid
+
+    # Nivel 2 puede pasar a sinónimo de Nivel 2
+    valid, _ = validate_verb_enhancement("Managed VMware infrastructure", "Administered VMware cluster", "administered")
+    assert valid
+    valid, _ = validate_verb_enhancement("Managing VMware infrastructure", "Maintained VMware cluster", "maintained")
+    assert valid
+    valid, _ = validate_verb_enhancement("Gestioné servidores", "Administré servidores", "administré")
+    assert valid
+
+    # Verbo desconocido debe ser exactamente el mismo
+    valid, _ = validate_verb_enhancement("Troubleshot DNS problems", "Troubleshot DNS configuration issues", "troubleshot")
+    assert valid
+    valid, _ = validate_verb_enhancement("Troubleshooting DNS problems", "Troubleshot DNS configuration issues", "troubleshot")
+    assert valid
+    valid, _ = validate_verb_enhancement("Troubleshot DNS problems", "Directed DNS resolution", "directed")
+    assert not valid
+
+
+
 
 
