@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Verificar que no haya archivos sensibles en el repo
+        run: |
+          if git ls-files | grep -E '(^|/)(\.env|secrets\.toml|job_tracker\.db)$'; then
+            echo "Hay archivos sensibles rastreados por git"
+            exit 1
+          fi
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Librerías del sistema para generar PDF
+        run: sudo apt-get update && sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Crear secretos FALSOS solo para las pruebas
+        run: |
+          mkdir -p .streamlit
+          echo 'SUPABASE_URL = "https://example.supabase.co"' > .streamlit/secrets.toml
+          echo 'SUPABASE_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo 'SUPABASE_SERVICE_ROLE_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo 'GEMINI_API_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo "SESSION_ENCRYPTION_KEY = \"$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')\"" >> .streamlit/secrets.toml
+
+      - name: Correr las pruebas
+        run: python -m pytest tests/ -q
