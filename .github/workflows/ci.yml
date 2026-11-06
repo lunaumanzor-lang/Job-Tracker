@@ -32,5 +32,14 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
+      - name: Crear secretos FALSOS solo para las pruebas
+        run: |
+          mkdir -p .streamlit
+          echo 'SUPABASE_URL = "https://example.supabase.co"' > .streamlit/secrets.toml
+          echo 'SUPABASE_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo 'SUPABASE_SERVICE_ROLE_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo 'GEMINI_API_KEY = "clave-falsa-para-pruebas"' >> .streamlit/secrets.toml
+          echo "SESSION_ENCRYPTION_KEY = \"$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')\"" >> .streamlit/secrets.toml
+
       - name: Correr las pruebas
         run: python -m pytest tests/ -q
